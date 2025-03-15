@@ -4,8 +4,13 @@
 #include "GPI2_SN.h"
 #include "GPI2_UCX.h"
 #include "GPI2_Utility.h"
+#include <stdio.h>
 
-#define NOTIMPLEMENTED() do { exit(1); } while (0);
+#define NOTIMPLEMENTED() \
+  do {                                                                \
+    fprintf(stderr, "Not implemented [%s:%i]\n", __FILE__, __LINE__); \    
+    exit(1);                                                          \
+  } while (0);
 
 int
 pgaspi_dev_create_endpoint (gaspi_context_t const *const GASPI_UNUSED (gctx),

@@ -18,8 +18,13 @@ along with GPI-2. If not, see <http://www.gnu.org/licenses/>.
 
 #include "GASPI.h"
 #include "GPI2_Types.h"
+#include <stdio.h>
 
-#define NOTIMPLEMENTED() do { exit(1); } while (0);
+#define NOTIMPLEMENTED() \
+  do {                                                                \
+    fprintf(stderr, "Not implemented [%s:%i]\n", __FILE__, __LINE__); \    
+    exit(1);                                                          \
+  } while (0);
 
 int
 pgaspi_dev_register_mem (gaspi_context_t const *const gctx,

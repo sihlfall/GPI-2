@@ -27,5 +27,7 @@ build-aux/
 GPI2.pc
 tests/bin/
 *~
+autom4te.cache/
+
 
 
