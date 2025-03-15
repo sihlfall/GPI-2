@@ -36,6 +36,10 @@ AC_DEFUN([ACX_USABLE_DEVICE],[
         if [test x${HAVE_TCP} = x1]; then
            options="$options Ethernet"
         fi
+		AM_CONDITIONAL([WITH_UCX], test x${HAVE_UCX} = x1)
+		if [test x${HAVE_UCX} = x1]; then
+			options="$options UCX"
+		fi
         AM_CONDITIONAL([WITH_INFINIBAND],[test x${HAVE_INFINIBAND} = x1])
  	AM_CONDITIONAL([WITH_INFINIBAND_EXT],[test x${HAVE_INFINIBAND_EXT} = x1 -a x$infiniband_ext != xno])
         if [test x${HAVE_INFINIBAND} = x1]; then

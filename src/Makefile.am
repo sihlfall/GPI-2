@@ -29,12 +29,15 @@ if WITH_INFINIBAND_EXT
 default_includes += -DGPI2_EXP_VERBS
 endif
 else
+if WITH_UCX
+else
 SRCS += devices/tcp/list.c devices/tcp/rb.c devices/tcp/tcp_device.c \
 devices/tcp/GPI2_TCP.c devices/tcp/GPI2_TCP_IO.c devices/tcp/GPI2_TCP_SEG.c \
 devices/tcp/GPI2_TCP_PASSIVE.c devices/tcp/GPI2_TCP_ATOMIC.c \
 devices/tcp/GPI2_TCP_GRP.c
 SRCS += devices/tcp/GPI2_TCP.h devices/tcp/list.h devices/tcp/rb.h devices/tcp/tcp_device.h
 default_includes += -I$(abs_top_srcdir)/src/devices/tcp -DGPI2_DEVICE_TCP
+endif
 endif
 
 # MPI MODE
