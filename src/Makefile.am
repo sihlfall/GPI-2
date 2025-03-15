@@ -30,6 +30,9 @@ default_includes += -DGPI2_EXP_VERBS
 endif
 else
 if WITH_UCX
+SRCS += devices/ucx/GPI2_UCX.c devices/ucx/GPI2_UCX_ATOMIC.c devices/ucx/GPI2_UCX_IO.c \
+devices/ucx/GPI2_UCX_PASSIVE.c devices/ucx/GPI2_UCX_SEG.c devices/ucx/GPI2_UCX_GRP.c
+SRCS += devices/ucx/GPI2_UCX.h
 else
 SRCS += devices/tcp/list.c devices/tcp/rb.c devices/tcp/tcp_device.c \
 devices/tcp/GPI2_TCP.c devices/tcp/GPI2_TCP_IO.c devices/tcp/GPI2_TCP_SEG.c \
