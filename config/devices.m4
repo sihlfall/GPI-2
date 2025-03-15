@@ -5,30 +5,30 @@ AC_DEFUN([ACX_USABLE_DEVICE],[
         if test x${with_infiniband} != xno -a x${with_ethernet} != xno; then
            TITLE([Checking for device(s):])
            AC_MSG_ERROR([Concurrently Infiniband and Ethernet is not supported])
-        elif test x${with_infiniband} != xno -a x${with_ethernet} = xno; then
-           TITLE([Checking for Infiniband])
-           ACX_INFINIBAND
-           if test x${HAVE_INFINIBAND} = x0; then
-              AC_MSG_ERROR([Infiniband requested, but can not use it])
-           fi
-        elif test x${with_infiniband} = xno -a x${with_ethernet} != xno; then
-           TITLE([Checking for Ethernet])
-           ACX_ETHERNET
-           if test x${HAVE_TCP} = x0; then
-              AC_MSG_ERROR([Ethernet requested, but can not use it])
-           fi
+		elif test x${with_infiniband} != xno -a x${with_ucx} != xno; then
+           TITLE([Checking for device(s):])
+           AC_MSG_ERROR([Concurrently Infiniband and UCX is not supported])
+		elif test x${with_ethernet} != xno -a x${with_ucx} != xno; then
+           TITLE([Checking for device(s):])
+           AC_MSG_ERROR([Concurrently Ethernet and UCX is not supported])
         else
-	   TITLE([Infiniband or Ethernet is required, checking for Infiniband...])
+	       TITLE([Checking for Infiniband...])
            with_infiniband=yes
            ACX_INFINIBAND
            if test x${HAVE_INFINIBAND} = x0; then
-	      AC_MSG_NOTICE([Infiniband can not be used])
-              TITLE([Checking for Ethernet])
-              ACX_ETHERNET
-              if test x${HAVE_TCP} = x0; then
-              	 AC_MSG_ERROR([Neither Infiniband nor Ethernet are usable])
+	          AC_MSG_NOTICE([Infiniband can not be used])
+		   	  TITLE([Checking for UCX...])
+			  with_ucx=yes
+			  ACX_UCX
+			  if test x${HAVE_UCX} = x0; then
+  	            AC_MSG_NOTICE([UCX can not be used])
+                TITLE([Checking for Ethernet])
+                ACX_ETHERNET
+                if test x${HAVE_TCP} = x0; then
+              	  AC_MSG_ERROR([Neither Infiniband nor Ethernet are usable])
+                fi
               fi
-           fi
+		   fi  
         fi
 
 	# COPY DEFAULT FILES FOR TESTING
@@ -176,6 +176,13 @@ AS_IF(test `./conftest_ib.exe; echo $?` -gt 0,
 	   HAVE_INFINIBAND_DEVICES=0]
 	   )
 ])
+
+################################################
+# Check and set UCX path
+# ----------------------------------
+AC_DEFUN([ACX_UCX],[
+	AC_CHECK_HEADER(ucp/api/ucp.h,[HAVE_UCX=1],[HAVE_UCX=0])
+	])
 
 ################################################
 # Check and set ETHERNET path

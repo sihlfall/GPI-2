@@ -26,5 +26,6 @@ config/ltversion.m4
 build-aux/
 GPI2.pc
 tests/bin/
+*~
 
 
