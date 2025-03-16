@@ -14,8 +14,11 @@ struct ucx_dev_args
 typedef struct
 {
   ucp_context_h ucp_ctx;
+  ucp_worker_h default_worker;
 } ucx_wpool_t;
 
 int ucx_dev_init_device (struct ucx_dev_args * args, ucx_wpool_t * wpool);
+void ucx_dev_stop_device(ucx_wpool_t * wpool);
+
 
 #endif

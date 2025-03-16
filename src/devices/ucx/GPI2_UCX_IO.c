@@ -21,7 +21,7 @@ along with GPI-2. If not, see <http://www.gnu.org/licenses/>.
 
 #define NOTIMPLEMENTED() \
   do {                                                                \
-    fprintf(stderr, "Not implemented [%s:%i]\n", __FILE__, __LINE__); \    
+    fprintf(stderr, "Not implemented [%s:%i]\n", __FILE__, __LINE__); \
     exit(1);                                                          \
   } while (0);
 

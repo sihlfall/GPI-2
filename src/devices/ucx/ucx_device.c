@@ -9,9 +9,11 @@ typedef struct
 {
 } gpi2_common_ucx_request_t;
 
+
 int
 ucx_dev_init_device (struct ucx_dev_args * args, ucx_wpool_t * wpool)
 {
+  // code taken from open mpi and modified
   int ret = 0;
 
   ucs_status_t status;
@@ -43,9 +45,36 @@ ucx_dev_init_device (struct ucx_dev_args * args, ucx_wpool_t * wpool)
   status = ucp_init(&context_params, config, &wpool->ucp_ctx);
   if (UCS_OK != status) {
     GASPI_DEBUG_PRINT_ERROR("ucp_init failed: %d", status);
-    ret = -1;
+    ucp_config_release(config);
+    goto err_exit;
   }
   ucp_config_release(config);
 
+  ucp_worker_params_t worker_params;
+  ucp_worker_h worker;
+
+  memset(&worker_params, 0, sizeof(worker_params));
+  worker_params.field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
+  worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
+  status = ucp_worker_create(wpool->ucp_ctx, &worker_params, &worker);
+  if (UCS_OK != status) {
+    GASPI_DEBUG_PRINT_ERROR("ucp_worker_create failed: %d", status);
+    goto err_create_worker;
+  }
+  wpool->default_worker = worker;
+
   return ret;
+
+err_create_worker:
+  ucp_cleanup(wpool->ucp_ctx);
+
+err_exit:
+  return -1;
+}
+
+void
+ucx_dev_stop_device(ucx_wpool_t * wpool)
+{
+  ucp_worker_destroy(wpool->default_worker);
+  ucp_cleanup(wpool->ucp_ctx);
 }

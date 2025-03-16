@@ -120,5 +120,9 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 int
 pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
 {
-  NOTIMPLEMENTED()
+  gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  ucx_dev_stop_device (ucx_dev_ctx->wpool);
+  free (gctx->device->ctx);
+  gctx->device->ctx = NULL;
+  return 0;
 }
