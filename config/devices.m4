@@ -185,8 +185,69 @@ AS_IF(test `./conftest_ib.exe; echo $?` -gt 0,
 # Check and set UCX path
 # ----------------------------------
 AC_DEFUN([ACX_UCX],[
-	AC_CHECK_HEADER(ucp/api/ucp.h,[HAVE_UCX=1],[HAVE_UCX=0])
-	])
+	if test "x$with_ucx" != xno; then
+		if test "x$with_ucx" != xyes; then
+			# User specifies path(s)
+			ac_path_ucx=$with_ucx
+			ac_inc_ucp=$ac_path_ucx/include/ucp
+			AC_CHECK_FILE($ac_inc_ucp/api/ucp.h,
+				[HAVE_UCX_HEADER=1],[HAVE_UCX_HEADER=0])
+			for ucxlib in libucp.so libucp.a; do
+				for ucxlib_path in lib lib64; do
+					ac_lib_ucxlib=$ac_path_ucxlib/$ucxlib_path
+					AC_CHECK_FILE($ac_lib_ucxlib/$ucxlib,[HAVE_UCX_LIB=1],[HAVE_UCX_LIB=0])
+					if test ${HAVE_UCX_LIB} = 1; then
+						break
+					fi
+			  done
+				if test ${HAVE_UCX_LIB} = 1; then
+					break
+	  	  fi
+			done
+		else
+			# Try to determine include path(s)
+			inc_paths=`cpp -v /dev/null >& cppt`
+			inc_paths=`sed -n '/^#include </,/^End/p' cppt | sed '1d;$d'`
+			rm -f cppt
+			for ucxinc in $inc_paths; do
+				ac_inc_ucp=$ucxinc/ucp
+			  AC_CHECK_FILE($ac_inc_ucp/api/ucp.h,
+					[HAVE_UCX_HEADER=1],[HAVE_UCX_HEADER=0])
+			done
+			# Try to determine library path(s)
+			for ucxinc in $inc_paths; do
+				ac_path_ucx=${ucxinc%/include*}
+				for ucxlib in libucp.so libucp.a; do
+					for ucxlib_path in lib lib64; do
+						ac_lib_ucx=$ac_path_ucx/$ucxlib_path
+			  	  AC_CHECK_FILE($ac_lib_ucx/$ucxlib,[HAVE_UCX_LIB=1],[HAVE_UCX_LIB=0])
+						if test ${HAVE_UCX_LIB} = 1; then
+							break
+						fi
+		      done
+					if test ${HAVE_UCX_LIB} = 1; then
+						break
+					fi
+  		  done
+			  if test ${HAVE_UCX_LIB} = 1; then
+					break
+	  	  fi
+			done
+			# If the above lib search fails, use autotools
+			if test ${HAVE_UCX_LIB} != 1; then
+				ac_lib_ucx=
+					AC_CHECK_LIB([ucp],[ucp_config_read],[HAVE_UCX_LIB=1],[HAVE_UCX_LIB=0])
+			fi
+		fi
+	fi
+	if test ${HAVE_UCX_HEADER} = 1 -a ${HAVE_UCX_LIB} = 1; then
+		HAVE_UCX=1
+		AC_SUBST(ac_lib_ucx,["-lucp -lucs -lucm -luct"])
+	else
+		HAVE_UCX=0
+	fi
+])
+
 
 ################################################
 # Check and set ETHERNET path

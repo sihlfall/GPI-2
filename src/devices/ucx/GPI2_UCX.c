@@ -1,14 +1,16 @@
+#include "GPI2_UCX.h"
+#include "ucx_device.h"
 #include "GASPI.h"
 #include "GPI2.h"
 #include "GPI2_Dev.h"
 #include "GPI2_SN.h"
-#include "GPI2_UCX.h"
 #include "GPI2_Utility.h"
+#include "ucp/api/ucp.h"
 #include <stdio.h>
 
 #define NOTIMPLEMENTED() \
   do {                                                                \
-    fprintf(stderr, "Not implemented [%s:%i]\n", __FILE__, __LINE__); \    
+    fprintf(stderr, "Not implemented [%s:%i]\n", __FILE__, __LINE__); \
     exit(1);                                                          \
   } while (0);
 
@@ -72,7 +74,47 @@ pgaspi_dev_comm_queue_is_valid (gaspi_context_t const *const gctx,
 int
 pgaspi_dev_init_core (gaspi_context_t * const gctx)
 {
-  NOTIMPLEMENTED()
+  int ret = 0;
+
+  gctx->device = calloc (1, sizeof (gctx->device));
+  if (NULL == gctx->device)
+  {
+    return -1;
+  }
+
+  gctx->device->ctx = calloc (1, sizeof (gaspi_ucx_ctx));
+  if (NULL == gctx->device->ctx)
+  {
+    free (gctx->device);
+    return -1;
+  }
+
+  gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+
+  struct ucx_dev_args *dev_args = malloc (sizeof (struct ucx_dev_args));
+
+  if (NULL == dev_args)
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to allocate memory.");
+    return -1;
+  }
+
+  dev_args->peers_num = gctx->tnc;
+  dev_args->id = gctx->rank;
+  dev_args->port =
+    gctx->config->dev_config.params.tcp.port + gctx->local_rank;
+
+  ucx_wpool_t * wpool = malloc (sizeof (ucx_wpool_t));
+
+  if ( ucx_dev_init_device (dev_args, wpool) != 0)
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
+    return -1;
+  }
+
+  ucx_dev_ctx->wpool = wpool;
+
+  return ret;
 }
 
 int
