@@ -675,7 +675,7 @@ gaspi_sn_connect_to_rank (const gaspi_rank_t rank,
         return GASPI_TIMEOUT;
     }
   }
-
+  fprintf(stderr, "Connected successfully to rank %d\n", rank);
   return GASPI_SUCCESS;
 }
 
@@ -959,6 +959,7 @@ _gaspi_sn_segment_register_command (const gaspi_rank_t rank,
   cdh.rkey[1] = gctx->rrmd[segment_id][gctx->rank].rkey[1];
 #endif
 
+  fprintf("sockfd: %d\n", gctx->sockfd[rank]);
   ssize_t ret =
     gaspi_sn_writen (gctx->sockfd[rank], &cdh, sizeof (gaspi_cd_header));
   if (ret != sizeof (gaspi_cd_header))

@@ -18,6 +18,7 @@ along with GPI-2. If not, see <http://www.gnu.org/licenses/>.
 
 #include "GASPI.h"
 #include "GPI2_Types.h"
+#include "GPI2_SN.h"
 #include <stdlib.h>
 #include <stdio.h>
 

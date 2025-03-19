@@ -1,0 +1,5 @@
+{
+  "files.associations": {
+    "tcp_device.h": "c"
+  }
+}
