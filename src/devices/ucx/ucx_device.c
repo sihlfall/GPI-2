@@ -4,9 +4,11 @@
 #include "GPI2.h"
 #include "GPI2_Utility.h"
 
+#include <string.h>
 
 typedef struct
 {
+  int dummy;
 } gpi2_common_ucx_request_t;
 
 

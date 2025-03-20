@@ -7,6 +7,8 @@
 #include "GPI2_Utility.h"
 #include "ucp/api/ucp.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define NOTIMPLEMENTED() \
   do {                                                                \
