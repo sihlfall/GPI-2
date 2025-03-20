@@ -30,10 +30,16 @@ pgaspi_dev_create_endpoint (gaspi_context_t const *const GASPI_UNUSED (gctx),
 
 //TODO:
 int
-pgaspi_dev_disconnect_context (gaspi_context_t * const GASPI_UNUSED (gctx),
-                               const int GASPI_UNUSED (i))
+pgaspi_dev_disconnect_context (gaspi_context_t * const gctx,
+                               const int i)
 {
-  NOTIMPLEMENTED()
+  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+
+  if (ucx_device_ctx->eps[i]) {
+    ucp_ep_close_nb (ucx_device_ctx->eps[i], UCP_EP_CLOSE_MODE_FLUSH);
+    ucx_device_ctx->eps[i] = 0;
+  }
+  
   return 0;
 }
 
@@ -41,14 +47,48 @@ int
 pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
                             const int i)
 {
-  struct ucx_dev_oob_response response;
-  ucx_dev_oob_client_make_request (
-    pgaspi_gethostname(i), gctx->config->dev_config.params.tcp.port, &response
-  );
-  fprintf(stderr, "Address length: %ld\n", response.length);
-  ucx_dev_oob_client_cleanup_response (&response);
+  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
-  NOTIMPLEMENTED()
+  if (!ucx_device_ctx->addresses[i].address_length)
+  {
+    struct ucx_dev_oob_response response;
+    ucx_dev_oob_client_make_request (
+      pgaspi_gethostname(i), gctx->config->dev_config.params.tcp.port, &response
+    );
+    fprintf(stderr, "Address length: %ld\n", response.length);
+
+    char * a = malloc(response.length);
+    memcpy(a, response.data, response.length);
+    ucx_device_ctx->addresses[i].address = (ucp_address_t *) a;
+    ucx_device_ctx->addresses[i].address_length = response.length;
+
+    ucx_dev_oob_client_cleanup_response (&response);
+  }
+
+  {
+    ucp_ep_params_t ep_params;
+    ucs_status_t ep_status;
+
+    ep_params.field_mask      = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
+                                UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE |
+                                UCP_EP_PARAM_FIELD_ERR_HANDLER |
+                                UCP_EP_PARAM_FIELD_USER_DATA;
+    ep_params.address         = ucx_device_ctx->addresses[i].address;
+    ep_params.err_mode        = UCP_ERR_HANDLING_MODE_PEER; // ?
+    ep_params.err_handler.cb  = NULL;
+    ep_params.err_handler.arg = NULL;
+    ep_params.user_data       = &ep_status;
+
+    ucs_status_t status = ucp_ep_create(ucx_device_ctx->wpool->default_worker, &ep_params, &ucx_device_ctx->eps[i]);
+    if (status != UCS_OK) {
+      fprintf(stderr, "Problem with ucp_ep_create\n");
+      GASPI_DEBUG_PRINT_ERROR ("Failed: ucp_ep_create");
+      return -1;
+    }
+  }
+
+  return 0;
+  //NOTIMPLEMENTED()
 }
 
 int
@@ -101,6 +141,9 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
   gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
+  ucx_dev_ctx->addresses = calloc(gctx->tnc, sizeof (struct ucx_dev_address_length_pair));
+  ucx_dev_ctx->eps = calloc(gctx->tnc, sizeof (ucp_ep_h));
+
   struct ucx_dev_args *dev_args = malloc (sizeof (struct ucx_dev_args));
 
   if (NULL == dev_args)
@@ -134,6 +177,11 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
       return -1;
     }
 
+    char * a = malloc(worker_attr.address_length);
+    memcpy(a, worker_attr.address, worker_attr.address_length);
+    ucx_dev_ctx->addresses[gctx->rank].address = (ucp_address_t *) a;
+    ucx_dev_ctx->addresses[gctx->rank].address_length = worker_attr.address_length;
+
     struct ucx_dev_oob_response response = {
       .data = (unsigned char *) worker_attr.address,
       .length = worker_attr.address_length
@@ -159,7 +207,22 @@ pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
 {
   gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   ucx_dev_oob_server_destroy (&ucx_dev_ctx->oob_server);
+  for (int i = 0; i < gctx->tnc; ++i)
+  {
+    if (ucx_dev_ctx->addresses[i].address_length)
+    {
+      ucx_dev_ctx->addresses[i].address_length = 0;
+      free (ucx_dev_ctx->addresses[i].address);
+    }
+  }
+  for (int i = 0; i < gctx->tnc; ++i) {
+    if (ucx_dev_ctx->eps[i]) {
+      ucp_ep_close_nb (ucx_dev_ctx->eps[i], UCP_EP_CLOSE_MODE_FORCE);
+    }
+  }
   ucx_dev_stop_device (ucx_dev_ctx->wpool);
+  free (ucx_dev_ctx->eps);
+  free (ucx_dev_ctx->addresses);
   free (gctx->device->ctx);
   gctx->device->ctx = NULL;
   return 0;
