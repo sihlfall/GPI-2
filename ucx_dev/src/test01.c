@@ -1,0 +1,6 @@
+#include "GPI2.h"
+
+int main()
+{
+  return 0;
+}

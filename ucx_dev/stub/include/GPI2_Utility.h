@@ -10,7 +10,7 @@
 #ifdef DEBUG
 #include "GPI2.h"
 extern gaspi_config_t glb_gaspi_cfg;
-#define GASPI_DEBUG_PRINT_ERROR(msg, ...)                               \
+#define GASPI_DEBUG_PRINT_ERROR(msg,...)                                \
   {                                                                     \
     int gaspi_debug_errsv = errno;                                      \
     if (gaspi_debug_errsv != 0)                                         \
@@ -28,7 +28,10 @@ extern gaspi_config_t glb_gaspi_cfg;
   }
 #else
 
-#define GASPI_DEBUG_PRINT_ERROR(msg, ...)
+#define GASPI_DEBUG_PRINT_ERROR(msg,...)
 #endif
+
+char * pgaspi_gethostname (const unsigned int id);
+
 
 #endif

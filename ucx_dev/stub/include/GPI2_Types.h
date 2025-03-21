@@ -1,6 +1,8 @@
 #ifndef GPI2_TYPES_H_
 #define GPI2_TYPES_H_
 
+#include "GASPI_types.h"
+
 typedef struct
 {
   void *ctx;
@@ -11,8 +13,7 @@ typedef struct
   int local_rank;
   int rank;
   int tnc;
-
-  int dummy;
+  char *hn_poff;
 
   /* GASPI configuration */
   gaspi_config_t *config;

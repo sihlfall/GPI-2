@@ -4,4 +4,6 @@
 #include "GASPI.h"
 #include "GPI2_Types.h"
 
+extern gaspi_context_t glb_gaspi_ctx;
+
 #endif
