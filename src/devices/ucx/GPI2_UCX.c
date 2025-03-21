@@ -84,7 +84,7 @@ pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
     ucs_status_t status = ucp_ep_create(ucx_device_ctx->wpool->default_worker, &ep_params, &ucx_device_ctx->eps[i]);
     if (status != UCS_OK) {
       fprintf(stderr, "Problem with ucp_ep_create\n");
-      GASPI_DEBUG_PRINT_ERROR ("Failed: ucp_ep_create");
+      GASPI_DEBUG_PRINT_ERROR ("Failed: ucp_ep_create", 0);
       return -1;
     }
   }
@@ -150,7 +150,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
   if (NULL == dev_args)
   {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to allocate memory.");
+    GASPI_DEBUG_PRINT_ERROR ("Failed to allocate memory.", 0);
     return -1;
   }
 
@@ -163,7 +163,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
   if ( ucx_dev_init_device (dev_args, wpool) != 0)
   {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
+    GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.", 0);
     return -1;
   }
 
@@ -175,7 +175,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
     };
 
     if ( ucp_worker_query(wpool->default_worker, &worker_attr) ) {
-      GASPI_DEBUG_PRINT_ERROR ("Failed to query worker address");
+      GASPI_DEBUG_PRINT_ERROR ("Failed to query worker address", 0);
       return -1;
     }
 

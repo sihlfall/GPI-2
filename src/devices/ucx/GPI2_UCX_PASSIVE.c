@@ -19,6 +19,7 @@ along with GPI-2. If not, see <http://www.gnu.org/licenses/>.
 #include "GASPI.h"
 #include "GPI2_UCX.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 #define NOTIMPLEMENTED() \
   do {                                                                \
