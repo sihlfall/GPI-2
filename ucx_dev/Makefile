@@ -1,5 +1,6 @@
 C=gcc
-CFLAGS=-std=c99 -pthread -Wall -pedantic
+CFLAGS=-std=c99 -pthread -Wall -pedantic -DDEBUG=1
+LINKFLAGS=-pthread
 SRC=./src
 SRC_GPI2UCX=../src/devices/ucx
 SRC_STUB=./stub/src
@@ -19,14 +20,8 @@ all: $(BIN) $(BIN)/test01
 $(BIN):
 	mkdir -p bin
 
-#$(BIN)/server: $(BIN)/server.o $(BIN)/clientserver.o
-#	$(C) $(CFLAGS) -o $@ $^ -lucp
-#
-#$(BIN)/client: $(BIN)/client.o $(BIN)/clientserver.o
-#	$(C) $(CFLAGS) -o $@ $^ -lucp
-
 $(BIN)/test01: $(BIN)/test01.o $(OBJS_GPI2UCX) $(OBJS_STUB)
-	$(C) $(CFLAGS) -o $@ $^ -lucp -pthread
+	$(C) $(LINKFLAGS) -o $@ $^ -lucp -pthread
 
 $(BIN)/%.o: $(SRC_GPI2UCX)/%.c Makefile
 	$(C) $(CFLAGS) $< -c -o $@ -lucp -pthread $(INC)
