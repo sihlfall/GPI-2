@@ -93,6 +93,8 @@ server_run (void * args)
   printf("Server is listening on port %d\n", myself->port);
 
   while (!myself->request_stop) {
+    ucp_worker_progress(myself->ucp_worker);
+/*
     int new_socket = accept (myself->server_fd, NULL, NULL);
     if (new_socket < 0) {
       if (myself->request_stop) break;
@@ -109,7 +111,7 @@ server_run (void * args)
       send (new_socket, myself->response_buffer, myself->response_buffer_length, 0);
     }
 
-    close (new_socket);
+    close (new_socket);*/
   }
 
 err_listen:
@@ -140,9 +142,73 @@ set_response (
   server_thread->response_buffer = response_buffer;
 }
 
+
+/**
+ * Error handling callback.
+ */
+static void
+err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
+{
+    printf("error handling callback was invoked with status %d (%s)\n",
+           status, ucs_status_string(status));
+    //connection_closed = 1;
+}
+
+static void
+stream_recv_cb (void *request, ucs_status_t status, size_t length, void *user_data)
+{
+}
+
+static void
+handle_connection (ucp_conn_request_h conn_request, void *args)
+{
+  struct handle_connection_args * connection_args = (struct handle_connection_args *) args;
+
+  fprintf(stderr, "Connection handler called\n");
+
+  ucp_ep_h server_ep;
+  {
+    ucs_status_t status = ucp_ep_create(
+      connection_args->worker,
+      & (ucp_ep_params_t) {
+        .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER |
+          UCP_EP_PARAM_FIELD_CONN_REQUEST,
+        .conn_request = conn_request,
+        .err_handler = {
+          .cb = err_cb,
+          .arg = NULL
+        }
+      },
+      &server_ep
+    );
+    if (status != UCS_OK) {
+      fprintf(stderr, "failed to create an endpoint on the server: (%s)\n",
+              ucs_status_string(status));
+      return;
+    }
+  }
+
+  char msg;
+  size_t chars_received;
+  ucs_status_ptr_t request = ucp_stream_recv_nbx(
+    server_ep, &msg, 1, &chars_received,
+    & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
+      .flags = UCP_STREAM_RECV_FLAG_WAITALL,
+      .cb = { .recv_stream = stream_recv_cb }
+    }
+  );
+
+  fprintf(stderr, "Freeing request and closing endpoint\n");
+
+  ucp_request_free (request);
+  ucp_ep_close_nb (server_ep, UCP_EP_CLOSE_MODE_FLUSH);
+
+}
+
 int
 ucx_dev_oob_server_initialize (
-  struct ucx_dev_oob_server_thread * server_thread, uint16_t port, int max_connections,
+  struct ucx_dev_oob_server_thread * server_thread, ucp_worker_h ucp_worker, uint16_t port, int max_connections,
   struct ucx_dev_oob_response const * response
 )
 {
@@ -150,11 +216,47 @@ ucx_dev_oob_server_initialize (
   set_response (server_thread, response);
   server_thread->port = port;
   server_thread->max_connections = max_connections;
+  server_thread->ucp_worker = ucp_worker;
+
+  server_thread->handle_connection_args.worker = ucp_worker;
+
+  ucp_listener_h ucp_listener;
+  {
+    ucs_status_t status = ucp_listener_create (
+      ucp_worker,
+      & (ucp_listener_params_t) {
+        .field_mask = UCP_LISTENER_PARAM_FIELD_SOCK_ADDR |
+          UCP_LISTENER_PARAM_FIELD_CONN_HANDLER,
+        .sockaddr = (ucs_sock_addr_t) {
+          .addr = (struct sockaddr *) & (struct sockaddr_in) {
+            .sin_family = AF_INET,
+            .sin_addr.s_addr = INADDR_ANY,
+            .sin_port = htons (8090) // TODO: port !!!!!                    
+          },
+          .addrlen = sizeof (struct sockaddr_in)
+        },
+        .conn_handler = (ucp_listener_conn_handler_t) {
+          .cb = handle_connection,
+          .arg = &server_thread->handle_connection_args
+        }
+      },
+      &ucp_listener
+    );
+    if (status != UCS_OK)
+    {
+      fprintf(stderr, "Failed to create listener\n");
+      return 1;
+    }
+  }
+
+  server_thread->ucp_listener = ucp_listener;
+
   if (pthread_create (&server_thread->server_tid, NULL, server_run, server_thread)) {
     perror ("Failed to create server thread");
     free (server_thread->response_buffer);
     return 1;
   }
+
   return 0;
 }
 
@@ -164,15 +266,81 @@ ucx_dev_oob_server_destroy (struct ucx_dev_oob_server_thread * server_thread)
   server_thread->request_stop = 1;
   shutdown (server_thread->server_fd, SHUT_RD); /* interrupt accept () */
   pthread_join (server_thread->server_tid, NULL);
+
+  if (server_thread->ucp_listener) ucp_listener_destroy (server_thread->ucp_listener);
   free (server_thread->response_buffer);
+}
+
+static int send_complete = 0;
+
+static void send_cb (void *request, ucs_status_t status, void *user_data)
+{
+  send_complete = 1;
 }
 
 int
 ucx_dev_oob_client_make_request(
+  ucp_worker_h ucp_worker,
   char const * hostip4, uint16_t port,
   struct ucx_dev_oob_response * response
 )
 {
+  fprintf(stderr, "Creating endpoint");
+
+  ucp_ep_h client_ep;
+  {
+    struct sockaddr_in serv_addr = {
+      .sin_family = AF_INET,
+      .sin_port = htons (8090)
+    };
+    if (inet_pton(AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
+      fprintf(stderr, "Invalid address/Address not supported");
+      return 1;
+    };
+  
+    ucs_status_t status = ucp_ep_create(
+      ucp_worker,
+      & (ucp_ep_params_t) {
+        .field_mask = UCP_EP_PARAM_FIELD_FLAGS |
+          UCP_EP_PARAM_FIELD_SOCK_ADDR   |
+          UCP_EP_PARAM_FIELD_ERR_HANDLER |
+          UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE,
+        .err_mode = UCP_ERR_HANDLING_MODE_PEER,
+        .err_handler = {
+          .cb = err_cb,
+          .arg = NULL
+        },
+        .flags = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER,
+        .sockaddr = {
+          .addr = (struct sockaddr *) & serv_addr,
+          .addrlen = sizeof (struct sockaddr_in)
+        }
+      },
+      &client_ep
+    );
+    if (status != UCS_OK)
+    {
+      fprintf(stderr, "Creating client EP failed\n");
+      return 1;
+    }
+  }
+
+  ucs_status_ptr_t request = 0;
+  {
+    char cmd = 'a';
+    request = ucp_stream_send_nbx (client_ep, &cmd, 1, & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
+      .cb.send = send_cb
+    });
+  }
+
+  while (!send_complete) { ucp_worker_progress (ucp_worker); }
+
+  ucp_request_free (request);
+
+  ucp_ep_close_nb (client_ep, UCP_EP_CLOSE_MODE_FORCE);
+  ucp_ep_destroy (client_ep);
+
   fprintf(stderr, "Making OOB request to %s:%d", hostip4, port);
 
   int reterr = 0;

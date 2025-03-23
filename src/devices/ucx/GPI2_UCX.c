@@ -55,6 +55,7 @@ pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
   {
     struct ucx_dev_oob_response response;
     ucx_dev_oob_client_make_request (
+      ucx_device_ctx->wpool->default_worker,
       pgaspi_gethostname(i), gctx->config->dev_config.params.tcp.port, &response
     );
     fprintf(stderr, "Address length: %ld\n", response.length);
@@ -194,7 +195,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
     /* initialize OOB TCP device */
     // TODO: Separate config for UCX device?
     ucx_dev_oob_server_initialize (
-      &ucx_dev_ctx->oob_server, gctx->config->dev_config.params.tcp.port,
+      &ucx_dev_ctx->oob_server, wpool->default_worker, gctx->config->dev_config.params.tcp.port,
       gctx->tnc, &response
     );
 

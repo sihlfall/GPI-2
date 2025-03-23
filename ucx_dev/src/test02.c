@@ -1,4 +1,6 @@
 #include "oob.h"
+#include "ucp/api/ucp.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,9 +25,44 @@ static int run_server(uint16_t host_port)
   };
   printf ("Response length: %ld\n", response.length);
 
+  /* initialize UCP context */
+  ucp_context_h ucp_context;
+  {
+    ucs_status_t status = ucp_init (
+      & (ucp_params_t) {
+        .field_mask = UCP_PARAM_FIELD_FEATURES,
+        .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM
+      },
+      NULL, &ucp_context
+    );
+    if (status != UCS_OK)
+    {
+        fprintf (stderr, "Initializing UCP context failed\n");
+        exit (1);
+    }
+  }
+
+  /* create worker */
+  ucp_worker_h ucp_worker;
+  {
+    ucs_status_t status = ucp_worker_create (
+      ucp_context,
+      & (ucp_worker_params_t) {
+        .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
+        .thread_mode = UCS_THREAD_MODE_SINGLE
+      },
+      &ucp_worker
+    );
+    if (status != UCS_OK)
+    {
+      fprintf (stderr, "Creating UCP worker failed\n");
+      exit (1);
+    }
+  }
+
   struct ucx_dev_oob_server_thread server_thread;
 
-  if (ucx_dev_oob_server_initialize (&server_thread, host_port, 3, &response))
+  if (ucx_dev_oob_server_initialize (&server_thread, ucp_worker, host_port, 3, &response))
   {
       printf ("Could not start server.\n");
       return 1;
@@ -40,14 +77,52 @@ static int run_server(uint16_t host_port)
   ucx_dev_oob_server_destroy (&server_thread);
   printf ("Server stopped.\n");
 
+  ucp_worker_destroy (ucp_worker);
+  ucp_cleanup (ucp_context);
+
   return 0;
 }
 
 int run_client (char const * peer_ip, uint16_t peer_port)
 {
+  /* initialize UCP context */
+  ucp_context_h ucp_context;
+  {
+    ucs_status_t status = ucp_init (
+      & (ucp_params_t) {
+        .field_mask = UCP_PARAM_FIELD_FEATURES,
+        .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM
+      },
+      NULL, &ucp_context
+    );
+    if (status != UCS_OK)
+    {
+        fprintf (stderr, "Initializing UCP context failed\n");
+        exit (1);
+    }
+  }
+
+  /* create worker */
+  ucp_worker_h ucp_worker;
+  {
+    ucs_status_t status = ucp_worker_create (
+      ucp_context,
+      & (ucp_worker_params_t) {
+        .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
+        .thread_mode = UCS_THREAD_MODE_SINGLE
+      },
+      &ucp_worker
+    );
+    if (status != UCS_OK)
+    {
+      fprintf (stderr, "Creating UCP worker failed\n");
+      exit (1);
+    }
+  }
+
   struct ucx_dev_oob_response response;
 
-  if (ucx_dev_oob_client_make_request(peer_ip, peer_port, &response)) {
+  if (ucx_dev_oob_client_make_request(ucp_worker, peer_ip, peer_port, &response)) {
       return 1;
   }
 

@@ -1,6 +1,6 @@
 C=gcc
 CFLAGS=-std=c99 -pthread -Wall -pedantic -DDEBUG=1
-LINKFLAGS=-pthread
+LINKFLAGS=-pthread -lucp -lucs
 SRC=./src
 SRC_GPI2UCX=../src/devices/ucx
 SRC_STUB=./stub/src
@@ -21,19 +21,19 @@ $(BIN):
 	mkdir -p bin
 
 $(BIN)/test01: $(BIN)/test01.o $(OBJS_GPI2UCX) $(OBJS_STUB)
-	$(C) $(LINKFLAGS) -o $@ $^ -lucp -pthread
+	$(C) -o $@ $^ $(LINKFLAGS) 
 
 $(BIN)/test02: $(BIN)/test02.o $(OBJS_GPI2UCX) $(OBJS_STUB)
-	$(C) $(LINKFLAGS) -o $@ $^ -lucp -pthread
+	$(C) -o $@ $^ $(LINKFLAGS)
 
 $(BIN)/%.o: $(SRC_GPI2UCX)/%.c Makefile
-	$(C) $(CFLAGS) $< -c -o $@ -lucp -pthread $(INC)
+	$(C) $(CFLAGS) $< -c -o $@ $(INC)
 
 $(BIN)/%.o: $(SRC)/%.c Makefile
-	$(C) $(CFLAGS) $< -c -o $@ -lucp -pthread $(INC)
+	$(C) $(CFLAGS) $< -c -o $@ $(INC)
 
 $(BIN)/%.o: $(SRC_STUB)/%.c Makefile
-	$(C) $(CFLAGS) $< -c -o $@ -lucp -pthread $(INC)
+	$(C) $(CFLAGS) $< -c -o $@ $(INC)
 
 .PHONY clean:
 	rm bin/*

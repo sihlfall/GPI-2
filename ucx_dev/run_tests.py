@@ -5,6 +5,7 @@ import os
 import paramiko
 import shlex
 import subprocess
+import time
 
 VERBOSE = True
 REPORT_OUTPUT = True
@@ -136,7 +137,7 @@ def test01b_run():
 
 def test02_run():
   binary_name = 'test01'
-  binary_path = os.path.join(LOCAL_BINARY_DIR, binary_name)
+  local_binary_path = os.path.join(LOCAL_BINARY_DIR, binary_name)
   print('Running test02 (local/local):')
   success = False
 
@@ -171,10 +172,11 @@ def test02b_run():
   success = False
 
   server_process, server_communicate = execute_remote_binary(
-    [ remote_binary_path, 's', '9000' ],
+    [ remote_binary_path, 's', '19000' ],
     host=host, username=username
   )
-  client_process, client_communicate = execute_local_binary([ local_binary_path, 'c', '192.168.0.205', '9000' ])
+  time.sleep(0.1) # TODO: Wait for some "OK" message from server
+  client_process, client_communicate = execute_local_binary([ local_binary_path, 'c', '192.168.0.205', '19000' ])
 
   if server_process is not None and client_process is not None:
     client_exit_status, client_stdout_text, client_stderr_text = client_communicate()
