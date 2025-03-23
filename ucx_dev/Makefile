@@ -15,12 +15,15 @@ OBJ_NAMES_STUB=GPI2.o GPI2_Utility.o
 OBJS_GPI2UCX = $(addprefix $(BIN)/, $(OBJ_NAMES_GPI2UCX))
 OBJS_STUB = $(addprefix $(BIN)/, $(OBJ_NAMES_STUB))
 
-all: $(BIN) $(BIN)/test01
+all: $(BIN) $(BIN)/test01 $(BIN)/test02
 
 $(BIN):
 	mkdir -p bin
 
 $(BIN)/test01: $(BIN)/test01.o $(OBJS_GPI2UCX) $(OBJS_STUB)
+	$(C) $(LINKFLAGS) -o $@ $^ -lucp -pthread
+
+$(BIN)/test02: $(BIN)/test02.o $(OBJS_GPI2UCX) $(OBJS_STUB)
 	$(C) $(LINKFLAGS) -o $@ $^ -lucp -pthread
 
 $(BIN)/%.o: $(SRC_GPI2UCX)/%.c Makefile
