@@ -7,8 +7,11 @@
 
 #include <ucp/api/ucp.h>
 
+struct ucx_dev_oob_server_thread;
+
 struct handle_connection_args {
   ucp_worker_h worker;
+  struct ucx_dev_oob_server_thread * server_thread;
 };
 
 struct ucx_dev_oob_server_thread {
@@ -23,6 +26,7 @@ struct ucx_dev_oob_server_thread {
   ucp_worker_h ucp_worker;
   ucp_listener_h ucp_listener;
   struct handle_connection_args handle_connection_args;
+  ucp_ep_h ep;
 };
 
 struct ucx_dev_oob_response {
@@ -31,7 +35,8 @@ struct ucx_dev_oob_response {
 };
 
 int ucx_dev_oob_server_initialize (
-  struct ucx_dev_oob_server_thread * server_thread, ucp_worker_h ucp_worker, uint16_t port, int max_connections,
+  struct ucx_dev_oob_server_thread * server_thread, ucp_worker_h ucp_server_worker, 
+  ucp_worker_h ucp_data_worker, uint16_t port, int max_connections,
   struct ucx_dev_oob_response const * response
 );
 

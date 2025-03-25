@@ -136,12 +136,13 @@ def test01b_run():
   conclude_test(success)
 
 def test02_run():
-  binary_name = 'test01'
+  binary_name = 'test02'
   local_binary_path = os.path.join(LOCAL_BINARY_DIR, binary_name)
   print('Running test02 (local/local):')
   success = False
 
   server_process, server_communicate = execute_local_binary([ local_binary_path, 's', '9000' ])
+  time.sleep(0.1) # TODO: Wait for some "OK" message from server
   client_process, client_communicate = execute_local_binary([ local_binary_path, 'c', '127.0.0.1', '9000' ])
 
   if server_process is not None and client_process is not None:
@@ -198,4 +199,4 @@ def test02b_run():
       print("Client run failed")
   conclude_test(success)
 
-test02b_run()
+test02_run()

@@ -35,7 +35,7 @@ create_oob_server_worker (ucp_context_h ucp_context, ucp_worker_h * oob_server_w
     ucp_context,
     & (ucp_worker_params_t) {
       .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
-      .thread_mode = UCS_THREAD_MODE_SINGLE
+      .thread_mode = UCS_THREAD_MODE_MULTI
     },
     oob_server_worker
   );
@@ -111,7 +111,7 @@ cleanup_stub_ucx_ctx (gaspi_ucx_ctx * ucx_ctx)
 
 static
 int
-run_server (ucp_context_h ucp_context, uint16_t host_port)
+run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t host_port)
 {
   char * s = "Hello Urs and Guenti ";
   size_t sl = strlen(s);
@@ -132,8 +132,8 @@ run_server (ucp_context_h ucp_context, uint16_t host_port)
   printf ("Response length: %ld\n", response.length);
 
   /* create worker */
-  ucp_worker_h ucp_worker;
-  if (create_oob_server_worker (ucp_context, &ucp_worker) != UCS_OK)
+  ucp_worker_h ucp_server_worker;
+  if (create_oob_server_worker (ucp_context, &ucp_server_worker) != UCS_OK)
   {
     fprintf (stderr, "Creating UCP worker failed\n");
     return 1;
@@ -141,7 +141,7 @@ run_server (ucp_context_h ucp_context, uint16_t host_port)
 
   struct ucx_dev_oob_server_thread server_thread;
 
-  if (ucx_dev_oob_server_initialize (&server_thread, ucp_worker, host_port, 3, &response))
+  if (ucx_dev_oob_server_initialize (&server_thread, ucp_server_worker, ucp_data_worker, host_port, 3, &response))
   {
       printf ("Could not start server.\n");
       return 1;
@@ -156,7 +156,7 @@ run_server (ucp_context_h ucp_context, uint16_t host_port)
   ucx_dev_oob_server_destroy (&server_thread);
   printf ("Server stopped.\n");
 
-  destroy_oob_server_worker (ucp_worker);
+  destroy_oob_server_worker (ucp_server_worker);
 
   return 0;
 }
@@ -247,7 +247,7 @@ main (int argc, char ** argv)
 
   if (config.is_server)
   {
-    ret = run_server (ucx_ctx.wpool->ucp_ctx, config.v.server.host_port);
+    ret = run_server (ucx_ctx.wpool->ucp_ctx, ucx_ctx.wpool->default_worker, config.v.server.host_port);
   }
   else
   {

@@ -157,6 +157,7 @@ err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 static void
 stream_recv_cb (void *request, ucs_status_t status, size_t length, void *user_data)
 {
+  fprintf(stdout, "Server receive cb called");
 }
 
 static void
@@ -164,7 +165,7 @@ handle_connection (ucp_conn_request_h conn_request, void *args)
 {
   struct handle_connection_args * connection_args = (struct handle_connection_args *) args;
 
-  fprintf(stderr, "Connection handler called\n");
+  fprintf(stdout, "Connection handler called\n");
 
   ucp_ep_h server_ep;
   {
@@ -187,6 +188,8 @@ handle_connection (ucp_conn_request_h conn_request, void *args)
       return;
     }
   }
+  connection_args->server_thread->ep = server_ep;
+  fprintf(stdout, "Server endpoint created\n");
 
   char msg;
   size_t chars_received;
@@ -199,16 +202,16 @@ handle_connection (ucp_conn_request_h conn_request, void *args)
     }
   );
 
-  fprintf(stderr, "Freeing request and closing endpoint\n");
+  fprintf(stderr, "Freeing request\n");
 
   ucp_request_free (request);
-  ucp_ep_close_nb (server_ep, UCP_EP_CLOSE_MODE_FLUSH);
-
 }
 
 int
 ucx_dev_oob_server_initialize (
-  struct ucx_dev_oob_server_thread * server_thread, ucp_worker_h ucp_worker, uint16_t port, int max_connections,
+  struct ucx_dev_oob_server_thread * server_thread,
+  ucp_worker_h ucp_server_worker, ucp_worker_h ucp_data_worker,
+  uint16_t port, int max_connections,
   struct ucx_dev_oob_response const * response
 )
 {
@@ -216,14 +219,17 @@ ucx_dev_oob_server_initialize (
   set_response (server_thread, response);
   server_thread->port = port;
   server_thread->max_connections = max_connections;
-  server_thread->ucp_worker = ucp_worker;
+  server_thread->ucp_worker = ucp_server_worker;
 
-  server_thread->handle_connection_args.worker = ucp_worker;
+  server_thread->handle_connection_args = (struct handle_connection_args) {
+    .worker = ucp_data_worker,
+    .server_thread = server_thread
+  };
 
   ucp_listener_h ucp_listener;
   {
     ucs_status_t status = ucp_listener_create (
-      ucp_worker,
+      server_thread->ucp_worker,
       & (ucp_listener_params_t) {
         .field_mask = UCP_LISTENER_PARAM_FIELD_SOCK_ADDR |
           UCP_LISTENER_PARAM_FIELD_CONN_HANDLER,
@@ -267,6 +273,8 @@ ucx_dev_oob_server_destroy (struct ucx_dev_oob_server_thread * server_thread)
   shutdown (server_thread->server_fd, SHUT_RD); /* interrupt accept () */
   pthread_join (server_thread->server_tid, NULL);
 
+  if (server_thread->ep) ucp_ep_close_nb (server_thread->ep, UCP_EP_CLOSE_MODE_FLUSH);
+
   if (server_thread->ucp_listener) ucp_listener_destroy (server_thread->ucp_listener);
   free (server_thread->response_buffer);
 }
@@ -285,6 +293,8 @@ ucx_dev_oob_client_make_request(
   struct ucx_dev_oob_response * response
 )
 {
+  * response = (struct ucx_dev_oob_response) {0};
+
   fprintf(stderr, "Creating endpoint");
 
   ucp_ep_h client_ep;
@@ -335,12 +345,18 @@ ucx_dev_oob_client_make_request(
   }
 
   while (!send_complete) { ucp_worker_progress (ucp_worker); }
+  fprintf(stdout, "Client send complete\n");
 
   ucp_request_free (request);
 
+  /* To do: Ask for status and only close if not yet closed */
   ucp_ep_close_nb (client_ep, UCP_EP_CLOSE_MODE_FORCE);
   ucp_ep_destroy (client_ep);
 
+  fprintf(stdout, "Finished");
+  return 0;
+
+  /*
   fprintf(stderr, "Making OOB request to %s:%d", hostip4, port);
 
   int reterr = 0;
@@ -369,7 +385,7 @@ ucx_dev_oob_client_make_request(
 
   ssize_t n_bytes_read;
 
-  /* Read server response */
+  // Read server response
   unsigned char lbuffer[8];
   n_bytes_read = read (sock, lbuffer, 8);
   CHECK_GOTO_ERROR(n_bytes_read == 8, "Invalid response", err_receiving_length)
@@ -394,11 +410,12 @@ err_connect:
 err_convert_address:
 err_create_socket:
   return reterr;
+  */
 }
 
 void
 ucx_dev_oob_client_cleanup_response (struct ucx_dev_oob_response * response)
 {
-  free (response->data);
-  memset (response, 0, sizeof (*response));
+  if (response->data) free (response->data);
+  * response = (struct ucx_dev_oob_response) {0};
 }
