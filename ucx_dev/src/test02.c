@@ -109,6 +109,82 @@ cleanup_stub_ucx_ctx (gaspi_ucx_ctx * ucx_ctx)
   cleanup_ucp_context (ucx_ctx->wpool->ucp_ctx);
 }
 
+
+static int server_received = 0;
+static size_t server_received_chars = 0;
+
+static void
+stream_recv_cb (void *request, ucs_status_t status, size_t length, void *user_data)
+{
+  fprintf(stderr, "Server receive cb called\n");
+  server_received = 1;
+  server_received_chars = length;
+}
+
+static
+void *
+server_run (void * args)
+{
+  __attribute_maybe_unused__ int reterr = 0;
+  struct ucx_dev_oob_server_thread * myself = (struct ucx_dev_oob_server_thread *) args;
+
+  fprintf(stderr, "Server is listening\n");
+
+  while (!myself->request_stop) {
+    
+    if (!myself->ep) { ucp_worker_progress(myself->ucp_worker); continue; }
+
+    fprintf(stderr, "Endpoint recognized\n");
+
+    {
+      char msg = 0;
+      size_t chars_received = 0;
+      ucs_status_ptr_t request = ucp_stream_recv_nbx(
+        myself->ep, &msg, 1, &chars_received,
+        & (ucp_request_param_t) {
+          .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
+          .flags = UCP_STREAM_RECV_FLAG_WAITALL,
+          .cb = { .recv_stream = stream_recv_cb }
+        }
+      );
+
+      if (request != NULL)
+      {
+        while (!server_received) ucp_worker_progress (myself->ucp_worker);
+        chars_received = server_received_chars;
+      }
+
+      fprintf(stderr, "Server received %lu characters: %d\n", chars_received, msg);
+      fprintf(stderr, "Freeing request\n");
+
+      if (request) ucp_request_free (request);
+    }
+    {
+      {
+        ucs_status_ptr_t request = 0;
+        {
+          char cmd = 'A';
+          request = ucp_stream_send_nbx (myself->ep, &cmd, 1, & (ucp_request_param_t) {0});
+        }
+        ucp_ep_flush (myself->ep);
+    
+  //     while (!send_complete) { ucp_worker_progress (connection_args->worker); }
+        fprintf(stdout, "Client send complete\n");
+    
+        ucp_request_free (request);
+      }  
+    }
+
+
+    while (!myself->request_stop) {
+      ucp_worker_progress(myself->ucp_worker);
+    }
+  }
+
+  pthread_exit (NULL);
+}
+
+
 static
 int
 run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t host_port)
@@ -146,6 +222,14 @@ run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t ho
       printf ("Could not start server.\n");
       return 1;
   }
+
+
+  if (pthread_create (&server_thread.server_tid, NULL, server_run, &server_thread)) {
+    perror ("Failed to create server thread");
+    free (server_thread.response_buffer);
+    return 1;
+  }
+
 
   printf("Server is running in a separate thread. Press any key to stop.\n");
 

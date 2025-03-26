@@ -59,68 +59,6 @@ static inline void print_hex(unsigned char * s) {
   fprintf(stderr, "\n");
 }
 
-static
-void *
-server_run (void * args)
-{
-  __attribute_maybe_unused__ int reterr = 0;
-  struct ucx_dev_oob_server_thread * myself = (struct ucx_dev_oob_server_thread *) args;
-
-  myself->server_fd = socket (AF_INET, SOCK_STREAM, 0);
-  CHECK_GOTO_ERROR(myself->server_fd != 0, "Socket failed", err_create_socket)
-
-  {
-    int optval = 1;
-    setsockopt (myself->server_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-  }
-  {
-    struct sockaddr_in address = {
-      .sin_family = AF_INET,
-      .sin_addr.s_addr = INADDR_ANY,
-      .sin_port = htons (myself->port)
-    };
-    CHECK_GOTO_ERROR(
-      bind (myself->server_fd, (struct sockaddr *) &address, sizeof (struct sockaddr_in)) >= 0,
-      "Bind failed", err_bind
-    )
-  }
-
-  CHECK_GOTO_ERROR(
-    listen (myself->server_fd, myself->max_connections) >= 0,
-    "Listen failed", err_listen
-  )
-
-  printf("Server is listening on port %d\n", myself->port);
-
-  while (!myself->request_stop) {
-    ucp_worker_progress(myself->ucp_worker);
-/*
-    int new_socket = accept (myself->server_fd, NULL, NULL);
-    if (new_socket < 0) {
-      if (myself->request_stop) break;
-      printf ("Accept failed");
-      perror ("Accept failed");
-      continue;
-    }
-
-    char cmd;
-    int n_bytes_read = read (new_socket, &cmd, 1);
-    printf ("Received: %c\n", cmd);
-
-    if (n_bytes_read && cmd == 'a') {
-      send (new_socket, myself->response_buffer, myself->response_buffer_length, 0);
-    }
-
-    close (new_socket);*/
-  }
-
-err_listen:
-err_bind:
-  close (myself->server_fd); myself->server_fd = 0;
-  printf ("Server is shutting down...\n");
-err_create_socket:
-  pthread_exit (NULL);
-}
 
 static inline
 void
@@ -154,16 +92,6 @@ err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
     //connection_closed = 1;
 }
 
-static int server_received = 0;
-static size_t server_received_chars = 0;
-
-static void
-stream_recv_cb (void *request, ucs_status_t status, size_t length, void *user_data)
-{
-  fprintf(stderr, "Server receive cb called\n");
-  server_received = 1;
-  server_received_chars = length;
-}
 
 static void
 handle_connection (ucp_conn_request_h conn_request, void *args)
@@ -194,45 +122,7 @@ handle_connection (ucp_conn_request_h conn_request, void *args)
     }
   }
   connection_args->server_thread->ep = server_ep;
-  fprintf(stdout, "Server endpoint created\n");
-
-  {
-    char msg = 0;
-    size_t chars_received = 0;
-    ucs_status_ptr_t request = ucp_stream_recv_nbx(
-      server_ep, &msg, 1, &chars_received,
-      & (ucp_request_param_t) {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
-        .flags = UCP_STREAM_RECV_FLAG_WAITALL,
-        .cb = { .recv_stream = stream_recv_cb }
-      }
-    );
-    if (request != NULL)
-    {
-      while (!server_received) ucp_worker_progress (connection_args->worker);
-      chars_received = server_received_chars;
-    }
-
-    fprintf(stderr, "Server received %lu characters: %d\n", chars_received, msg);
-    fprintf(stderr, "Freeing request\n");
-
-    if (request) ucp_request_free (request);
-  }
-  {
-    {
-      ucs_status_ptr_t request = 0;
-      {
-        char cmd = 'A';
-        request = ucp_stream_send_nbx (server_ep, &cmd, 1, & (ucp_request_param_t) {0});
-      }
-      ucp_ep_flush (server_ep);
-  
- //     while (!send_complete) { ucp_worker_progress (connection_args->worker); }
-      fprintf(stdout, "Client send complete\n");
-  
-      ucp_request_free (request);
-    }  
-  }
+  fprintf(stderr, "Server endpoint created\n");
 }
 
 int
@@ -250,7 +140,7 @@ ucx_dev_oob_server_initialize (
   server_thread->ucp_worker = ucp_server_worker;
 
   server_thread->handle_connection_args = (struct handle_connection_args) {
-    .worker = ucp_data_worker,
+    .worker = server_thread->ucp_worker,
     .server_thread = server_thread
   };
 
@@ -285,12 +175,6 @@ ucx_dev_oob_server_initialize (
 
   server_thread->ucp_listener = ucp_listener;
 
-  if (pthread_create (&server_thread->server_tid, NULL, server_run, server_thread)) {
-    perror ("Failed to create server thread");
-    free (server_thread->response_buffer);
-    return 1;
-  }
-
   return 0;
 }
 
@@ -308,7 +192,7 @@ ucx_dev_oob_server_destroy (struct ucx_dev_oob_server_thread * server_thread)
 }
 
 static int send_complete = 0;
-static int recv_complete = 1;
+static int recv_complete = 0;
 
 static void send_cb (void *request, ucs_status_t status, void *user_data)
 {
@@ -330,7 +214,7 @@ ucx_dev_oob_client_make_request(
 {
   * response = (struct ucx_dev_oob_response) {0};
 
-  fprintf(stderr, "Creating endpoint");
+  fprintf(stderr, "Creating endpoint\n");
 
   ucp_ep_h client_ep;
   {
@@ -370,6 +254,8 @@ ucx_dev_oob_client_make_request(
     }
   }
 
+  fprintf(stderr, "Client endpoint created\n");
+
   {
     ucs_status_ptr_t request = 0;
     {
@@ -380,6 +266,8 @@ ucx_dev_oob_client_make_request(
       });
     }
     //ucp_ep_flush (client_ep);
+    fprintf(stderr, "Send initiated, yet not complete\n");
+
 
     while (!send_complete) { ucp_worker_progress (ucp_worker); }
     fprintf(stdout, "Client send complete\n");
@@ -405,69 +293,19 @@ ucx_dev_oob_client_make_request(
     ucp_request_free (request);
   }
 
-
+  fprintf(stderr, "Closing and destroying ep\n");
   /* To do: Ask for status and only close if not yet closed */
-  ucp_ep_close_nb (client_ep, UCP_EP_CLOSE_MODE_FORCE);
-  ucp_ep_destroy (client_ep);
-
-  fprintf(stdout, "Finished");
-  return 0;
-
-  /*
-  fprintf(stderr, "Making OOB request to %s:%d", hostip4, port);
-
-  int reterr = 0;
-  response->data = NULL; response->length = 0;
-
-  int sock = socket (AF_INET, SOCK_STREAM, 0);
-  CHECK_GOTO_ERROR (sock >= 0, "Socket creation error", err_create_socket)
-
-  struct sockaddr_in serv_addr = {
-    .sin_family = AF_INET,
-    .sin_port = htons (port)
-  };
-  CHECK_GOTO_ERROR (
-    inet_pton(AF_INET, hostip4, &serv_addr.sin_addr) >= 0,
-    "Invalid address/Address not supported", err_convert_address
-  )
-
-  CHECK_GOTO_ERROR (
-    connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) >= 0,
-    "Connection failed", err_connect
-  )
-
-  char message = 'a';
-  send(sock, &message, 1, 0);
-  printf("Message sent: %c\n", message);
-
-  ssize_t n_bytes_read;
-
-  // Read server response
-  unsigned char lbuffer[8];
-  n_bytes_read = read (sock, lbuffer, 8);
-  CHECK_GOTO_ERROR(n_bytes_read == 8, "Invalid response", err_receiving_length)
-  fprintf(stderr, "Lbuffer: "); print_hex(&lbuffer[0]);
-  size_t n_bytes_to_expect = from_big_endian_64 (lbuffer);
-
-  fprintf(stderr, "Server response (bytes to expect): %lu\n", n_bytes_to_expect);
-  response->data = (unsigned char *) malloc (n_bytes_to_expect);
-
-  n_bytes_read = read(sock, response->data, n_bytes_to_expect);
-  if (n_bytes_read != n_bytes_to_expect) {
-    free (response->data); response->data = NULL;
-    CHECK_GOTO_ERROR(0, "Invalid response -- too few bytes received", err_inconsistent_response)
+  {
+    ucp_ep_flush (client_ep);
+    ucs_status_ptr_t request = ucp_ep_close_nbx (client_ep, & (ucp_request_param_t) {0});
+    if (request != NULL) {
+      while (ucp_request_check_status (request) == UCS_INPROGRESS) ucp_worker_progress (ucp_worker);
+    }
+    ucp_request_free (request);
   }
-  response->length = n_bytes_read;
 
-err_inconsistent_response:
-err_receiving_length:
-  close(sock);
-
-err_connect:
-err_convert_address:
-err_create_socket:
-  return reterr;
-  */
+  fprintf(stdout, "Finished\n");
+  return 0;
 }
 
 void
