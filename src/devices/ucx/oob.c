@@ -154,10 +154,15 @@ err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
     //connection_closed = 1;
 }
 
+static int server_received = 0;
+static size_t server_received_chars = 0;
+
 static void
 stream_recv_cb (void *request, ucs_status_t status, size_t length, void *user_data)
 {
-  fprintf(stdout, "Server receive cb called");
+  fprintf(stderr, "Server receive cb called\n");
+  server_received = 1;
+  server_received_chars = length;
 }
 
 static void
@@ -191,20 +196,43 @@ handle_connection (ucp_conn_request_h conn_request, void *args)
   connection_args->server_thread->ep = server_ep;
   fprintf(stdout, "Server endpoint created\n");
 
-  char msg;
-  size_t chars_received;
-  ucs_status_ptr_t request = ucp_stream_recv_nbx(
-    server_ep, &msg, 1, &chars_received,
-    & (ucp_request_param_t) {
-      .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
-      .flags = UCP_STREAM_RECV_FLAG_WAITALL,
-      .cb = { .recv_stream = stream_recv_cb }
+  {
+    char msg = 0;
+    size_t chars_received = 0;
+    ucs_status_ptr_t request = ucp_stream_recv_nbx(
+      server_ep, &msg, 1, &chars_received,
+      & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
+        .flags = UCP_STREAM_RECV_FLAG_WAITALL,
+        .cb = { .recv_stream = stream_recv_cb }
+      }
+    );
+    if (request != NULL)
+    {
+      while (!server_received) ucp_worker_progress (connection_args->worker);
+      chars_received = server_received_chars;
     }
-  );
 
-  fprintf(stderr, "Freeing request\n");
+    fprintf(stderr, "Server received %lu characters: %d\n", chars_received, msg);
+    fprintf(stderr, "Freeing request\n");
 
-  ucp_request_free (request);
+    if (request) ucp_request_free (request);
+  }
+  {
+    {
+      ucs_status_ptr_t request = 0;
+      {
+        char cmd = 'A';
+        request = ucp_stream_send_nbx (server_ep, &cmd, 1, & (ucp_request_param_t) {0});
+      }
+      ucp_ep_flush (server_ep);
+  
+ //     while (!send_complete) { ucp_worker_progress (connection_args->worker); }
+      fprintf(stdout, "Client send complete\n");
+  
+      ucp_request_free (request);
+    }  
+  }
 }
 
 int
@@ -280,10 +308,17 @@ ucx_dev_oob_server_destroy (struct ucx_dev_oob_server_thread * server_thread)
 }
 
 static int send_complete = 0;
+static int recv_complete = 1;
 
 static void send_cb (void *request, ucs_status_t status, void *user_data)
 {
   send_complete = 1;
+}
+
+static void client_recv_ack_cb (void *request, ucs_status_t status, size_t length, void *user_data)
+{
+  fprintf(stdout, "Client recv handler called\n");
+  recv_complete = 1;
 }
 
 int
@@ -335,19 +370,41 @@ ucx_dev_oob_client_make_request(
     }
   }
 
-  ucs_status_ptr_t request = 0;
   {
-    char cmd = 'a';
-    request = ucp_stream_send_nbx (client_ep, &cmd, 1, & (ucp_request_param_t) {
-      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
-      .cb.send = send_cb
-    });
+    ucs_status_ptr_t request = 0;
+    {
+      char cmd = 'x';
+      request = ucp_stream_send_nbx (client_ep, &cmd, 1, & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
+        .cb.send = send_cb
+      });
+    }
+    //ucp_ep_flush (client_ep);
+
+    while (!send_complete) { ucp_worker_progress (ucp_worker); }
+    fprintf(stdout, "Client send complete\n");
+
+    ucp_request_free (request);
   }
 
-  while (!send_complete) { ucp_worker_progress (ucp_worker); }
-  fprintf(stdout, "Client send complete\n");
+  {
+    char msg = 0;
+    size_t chars_received = 0;
+    ucs_status_ptr_t request = ucp_stream_recv_nbx(
+      client_ep, &msg, 1, &chars_received,
+      & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
+        .flags = UCP_STREAM_RECV_FLAG_WAITALL,
+        .cb = { .recv_stream = client_recv_ack_cb }
+      }
+    );
 
-  ucp_request_free (request);
+    while (!recv_complete) { ucp_worker_progress (ucp_worker); }
+    fprintf(stdout, "Client received %lu characters: %d\n", chars_received, msg);
+
+    ucp_request_free (request);
+  }
+
 
   /* To do: Ask for status and only close if not yet closed */
   ucp_ep_close_nb (client_ep, UCP_EP_CLOSE_MODE_FORCE);
