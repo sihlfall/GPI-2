@@ -1,4 +1,5 @@
 #include "ucx_device.h"
+#include "GPI2_UCX.h"
 #include "ucp/api/ucp.h"
 
 #include "GPI2.h"
@@ -13,7 +14,7 @@ typedef struct
 
 
 int
-ucx_dev_init_device (struct ucx_dev_args * args, ucx_wpool_t * wpool)
+ucx_dev_init_device (struct ucx_dev_args * args, gaspi_ucx_ctx * wpool)
 {
   // code taken from open mpi and modified
   int ret = 0;
@@ -75,7 +76,7 @@ err_exit:
 }
 
 void
-ucx_dev_stop_device(ucx_wpool_t * wpool)
+ucx_dev_stop_device(gaspi_ucx_ctx * wpool)
 {
   ucp_worker_destroy(wpool->default_worker);
   ucp_cleanup(wpool->ucp_ctx);

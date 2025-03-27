@@ -104,7 +104,6 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
   gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
-  ucx_dev_ctx->addresses = calloc(gctx->tnc, sizeof (struct ucx_dev_address_length_pair));
   ucx_dev_ctx->eps = calloc(gctx->tnc, sizeof (ucp_ep_h));
 
   struct ucx_dev_args *dev_args = malloc (sizeof (struct ucx_dev_args));
@@ -120,35 +119,18 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
   dev_args->port =
     gctx->config->dev_config.params.tcp.port + gctx->local_rank;
 
-  ucx_wpool_t * wpool = malloc (sizeof (ucx_wpool_t));
 
-  if ( ucx_dev_init_device (dev_args, wpool) != 0)
+  if ( ucx_dev_init_device (dev_args, ucx_dev_ctx) != 0)
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
     return -1;
   }
 
-  ucx_dev_ctx->wpool = wpool;
-
   {
-    ucp_worker_attr_t worker_attr = {
-      .field_mask = UCP_WORKER_ATTR_FIELD_ADDRESS
-    };
-
-    if ( ucp_worker_query(wpool->default_worker, &worker_attr) ) {
-      GASPI_DEBUG_PRINT_ERROR ("Failed to query worker address");
-      return -1;
-    }
-
-    char * a = malloc(worker_attr.address_length);
-    memcpy(a, worker_attr.address, worker_attr.address_length);
-    ucx_dev_ctx->addresses[gctx->rank].address = (ucp_address_t *) a;
-    ucx_dev_ctx->addresses[gctx->rank].address_length = worker_attr.address_length;
-
     /* initialize OOB TCP device */
     // TODO: Separate config for UCX device?
     ucx_dev_oob_server_initialize (
-      &ucx_dev_ctx->oob_server, wpool->default_worker, gctx->config->dev_config.params.tcp.port
+      &ucx_dev_ctx->oob_server, ucx_dev_ctx->default_worker, gctx->config->dev_config.params.tcp.port
     );
   }
 
@@ -160,22 +142,13 @@ pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
 {
   gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   ucx_dev_oob_server_destroy (&ucx_dev_ctx->oob_server);
-  for (int i = 0; i < gctx->tnc; ++i)
-  {
-    if (ucx_dev_ctx->addresses[i].address_length)
-    {
-      ucx_dev_ctx->addresses[i].address_length = 0;
-      free (ucx_dev_ctx->addresses[i].address);
-    }
-  }
   for (int i = 0; i < gctx->tnc; ++i) {
     if (ucx_dev_ctx->eps[i]) {
       ucp_ep_close_nb (ucx_dev_ctx->eps[i], UCP_EP_CLOSE_MODE_FORCE);
     }
   }
-  ucx_dev_stop_device (ucx_dev_ctx->wpool);
+  ucx_dev_stop_device (ucx_dev_ctx);
   free (ucx_dev_ctx->eps);
-  free (ucx_dev_ctx->addresses);
   free (gctx->device->ctx);
   gctx->device->ctx = NULL;
   return 0;

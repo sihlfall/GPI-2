@@ -1,24 +1,11 @@
 #ifndef UCX_DEVICE_H_
 #define UCX_DEVICE_H_
 
+#include "GPI2_UCX.h"
 #include "ucp/api/ucp.h"
 
-struct ucx_dev_args
-{
-  int peers_num;
-  int id;
-  int port;
-  int oob_fd;
-};
-
-typedef struct
-{
-  ucp_context_h ucp_ctx;
-  ucp_worker_h default_worker;
-} ucx_wpool_t;
-
-int ucx_dev_init_device (struct ucx_dev_args * args, ucx_wpool_t * wpool);
-void ucx_dev_stop_device(ucx_wpool_t * wpool);
+int ucx_dev_init_device (struct ucx_dev_args * args, gaspi_ucx_ctx * wpool);
+void ucx_dev_stop_device(gaspi_ucx_ctx * wpool);
 
 
 #endif
