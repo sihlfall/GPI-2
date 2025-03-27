@@ -7,26 +7,15 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-struct ucx_dev_oob_server_thread;
-
-struct handle_connection_args {
-  ucp_worker_h worker;
-  struct ucx_dev_oob_server_thread * server_thread;
-};
-
-
-struct ucx_dev_oob_server_thread {
+typedef struct ucx_device {
   atomic_int request_stop;
   atomic_int is_running;
   pthread_t server_tid;
-  uint16_t port;
   ucp_worker_h ucp_worker;
   ucp_listener_h ucp_listener;
-  struct handle_connection_args handle_connection_args;
   ucp_ep_h ep;
   ucp_context_h ucp_ctx;
-  ucp_worker_h default_worker;
-};
+} ucx_device_t;
 
 
 struct ucx_dev_args
@@ -37,14 +26,10 @@ struct ucx_dev_args
   int oob_fd;
 };
 
-int ucx_dev_oob_server_initialize (
-  struct ucx_dev_oob_server_thread * server_thread, ucp_worker_h ucp_server_worker, uint16_t port
-);
-
-void ucx_dev_oob_server_destroy (struct ucx_dev_oob_server_thread * server_thread);
-
-int ucx_dev_init_device (struct ucx_dev_args * args, struct ucx_dev_oob_server_thread * wpool);
-void ucx_dev_stop_device(struct ucx_dev_oob_server_thread * wpool);
+int ucx_dev_init_device (struct ucx_dev_args * args, ucx_device_t * ucx_device);
+int ucx_dev_create_listener (ucx_device_t * ucx_device, uint16_t port);
+void ucx_dev_cleanup_listener (ucx_device_t * ucx_device);
+void ucx_dev_stop_device(ucx_device_t * ucx_device);
 
 
 #endif

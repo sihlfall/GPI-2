@@ -9,7 +9,7 @@
 
 typedef struct
 {
-  struct ucx_dev_oob_server_thread oob_server;
+  struct ucx_device oob_server;
   ucp_ep_h * eps;
 } gaspi_ucx_ctx;
 

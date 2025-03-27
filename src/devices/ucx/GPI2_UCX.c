@@ -120,18 +120,16 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
     gctx->config->dev_config.params.tcp.port + gctx->local_rank;
 
 
-  if ( ucx_dev_init_device (dev_args, ucx_dev_ctx) != 0)
+  if ( ucx_dev_init_device (dev_args, &ucx_dev_ctx->oob_server) != 0)
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
     return -1;
   }
 
+  if (ucx_dev_create_listener (&ucx_dev_ctx->oob_server, gctx->config->dev_config.params.tcp.port) != 0)
   {
-    /* initialize OOB TCP device */
-    // TODO: Separate config for UCX device?
-    ucx_dev_oob_server_initialize (
-      &ucx_dev_ctx->oob_server, ucx_dev_ctx->default_worker, gctx->config->dev_config.params.tcp.port
-    );
+    GASPI_DEBUG_PRINT_ERROR ("Failed to create listener.");
+    return -1;
   }
 
   return ret;
@@ -141,13 +139,13 @@ int
 pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
 {
   gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
-  ucx_dev_oob_server_destroy (&ucx_dev_ctx->oob_server);
+  if (ucx_dev_ctx->oob_server.ucp_listener != 0) ucx_dev_cleanup_listener (&ucx_dev_ctx->oob_server);
   for (int i = 0; i < gctx->tnc; ++i) {
     if (ucx_dev_ctx->eps[i]) {
       ucp_ep_close_nb (ucx_dev_ctx->eps[i], UCP_EP_CLOSE_MODE_FORCE);
     }
   }
-  ucx_dev_stop_device (ucx_dev_ctx);
+  ucx_dev_stop_device (&ucx_dev_ctx->oob_server);
   free (ucx_dev_ctx->eps);
   free (gctx->device->ctx);
   gctx->device->ctx = NULL;

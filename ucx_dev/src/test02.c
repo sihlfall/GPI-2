@@ -7,106 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static
-ucs_status_t
-initialize_ucp_context (ucp_context_h * ucp_context)
-{
-  ucs_status_t status = ucp_init (
-    & (ucp_params_t) {
-      .field_mask = UCP_PARAM_FIELD_FEATURES,
-      .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM
-    },
-    NULL, ucp_context
-  );
-  return status;
-}
 
-static
-void
-cleanup_ucp_context (ucp_context_h ucp_context)
-{
-  ucp_cleanup (ucp_context);
-}
-
-static
-ucs_status_t
-create_oob_server_worker (ucp_context_h ucp_context, ucp_worker_h * oob_server_worker)
-{
-  ucs_status_t status = ucp_worker_create (
-    ucp_context,
-    & (ucp_worker_params_t) {
-      .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
-      .thread_mode = UCS_THREAD_MODE_MULTI
-    },
-    oob_server_worker
-  );
-  return status;
-}
-
-static
-void
-destroy_oob_server_worker (ucp_worker_h oob_server_worker)
-{
-  ucp_worker_destroy (oob_server_worker);
-}
-
-static
-ucs_status_t
-create_ucx_ctx_default_worker (gaspi_ucx_ctx * ucx_ctx)
-{
-  ucp_worker_h worker;
-  ucs_status_t status = ucp_worker_create (
-    ucx_ctx->oob_server.ucp_ctx,
-    & (ucp_worker_params_t) {
-      .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
-      .thread_mode = UCS_THREAD_MODE_SINGLE
-    },
-    &worker
-  );
-  if (status != UCS_OK) return status;
-
-  ucx_ctx->oob_server.default_worker = worker;
-  return UCS_OK;
-}
-
-static
-void
-destroy_ucx_ctx_default_worker (gaspi_ucx_ctx * ucx_ctx)
-{
-  ucp_worker_destroy (ucx_ctx->oob_server.default_worker);
-}
-
-static
-int
-initialize_stub_ucx_ctx (gaspi_ucx_ctx * ucx_ctx)
-{
-  * ucx_ctx = (gaspi_ucx_ctx) {0};
-
-  {
-    ucp_context_h ucp_context;
-    if (initialize_ucp_context(&ucp_context) != UCS_OK)
-    {
-      fprintf (stderr, "Initializing UCP context failed\n");
-      return 1;
-    }
-    ucx_ctx->oob_server.ucp_ctx = ucp_context;
-  }
-
-  if (create_ucx_ctx_default_worker (ucx_ctx) != UCS_OK) goto err_create_default_worker;
-  return 0;
-
-err_create_default_worker:
-  cleanup_ucp_context (ucx_ctx->oob_server.ucp_ctx);
-  return 1;
-}
-
-static
-void
-cleanup_stub_ucx_ctx (gaspi_ucx_ctx * ucx_ctx)
-{
-  destroy_ucx_ctx_default_worker (ucx_ctx);
-  cleanup_ucp_context (ucx_ctx->oob_server.ucp_ctx);
-}
 
 
 static int server_received = 0;
@@ -115,7 +16,7 @@ static size_t server_received_chars = 0;
 static void
 stream_recv_cb (void *request, ucs_status_t status, size_t length, void *user_data)
 {
-  fprintf(stderr, "Server receive cb called\n");
+  fprintf(stderr, "Server receive cb called (length: %lu)\n", length);
   server_received = 1;
   server_received_chars = length;
 }
@@ -125,7 +26,7 @@ void *
 server_run (void * args)
 {
   __attribute_maybe_unused__ int reterr = 0;
-  struct ucx_dev_oob_server_thread * myself = (struct ucx_dev_oob_server_thread *) args;
+  struct ucx_device * myself = (struct ucx_device *) args;
 
   fprintf(stderr, "Server is listening\n");
 
@@ -186,21 +87,17 @@ server_run (void * args)
 
 static
 int
-run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t host_port)
+run_server (uint16_t host_port)
 {
-  /* create worker */
-  ucp_worker_h ucp_server_worker;
-  if (create_oob_server_worker (ucp_context, &ucp_server_worker) != UCS_OK)
-  {
-    fprintf (stderr, "Creating UCP worker failed\n");
+  struct ucx_device server_thread;
+  if (ucx_dev_init_device (& (struct ucx_dev_args) {0}, &server_thread)) {
+    fprintf (stderr, "Could not create ucx_device\n");
     return 1;
   }
 
-  struct ucx_dev_oob_server_thread server_thread;
-
-  if (ucx_dev_oob_server_initialize (&server_thread, ucp_server_worker, host_port))
+  if (ucx_dev_create_listener (&server_thread, host_port))
   {
-      printf ("Could not start server.\n");
+      fprintf (stderr, "Could not create listener.\n");
       return 1;
   }
 
@@ -216,11 +113,12 @@ run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t ho
   /* Wait for keypress */
   getc (stdin);
 
-  printf ("Stopping server...\n");
-  ucx_dev_oob_server_destroy (&server_thread);
-  printf ("Server stopped.\n");
+  fprintf (stderr, "Stopping server ...\n");
+  ucx_dev_cleanup_listener (&server_thread);
 
-  destroy_oob_server_worker (ucp_server_worker);
+  fprintf (stderr, "Cleanup ...\n");
+  ucx_dev_stop_device (&server_thread);
+  fprintf (stderr, "Server stopped.\n");
 
   return 0;
 }
@@ -231,6 +129,56 @@ run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t ho
 /*
  * Client
  */
+
+
+static
+ucs_status_t
+initialize_ucp_context (ucp_context_h * ucp_context)
+{
+  ucs_status_t status = ucp_init (
+    & (ucp_params_t) {
+      .field_mask = UCP_PARAM_FIELD_FEATURES,
+      .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM
+    },
+    NULL, ucp_context
+  );
+  return status;
+}
+
+static
+void
+cleanup_ucp_context (ucp_context_h ucp_context)
+{
+  ucp_cleanup (ucp_context);
+}
+
+
+static
+ucs_status_t
+create_worker (ucp_context_h ucp_context, ucp_worker_h * worker)
+{
+  ucs_status_t status = ucp_worker_create (
+    ucp_context,
+    & (ucp_worker_params_t) {
+      .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
+      .thread_mode = UCS_THREAD_MODE_SINGLE
+    },
+    worker
+  );
+  if (status != UCS_OK) return status;
+  return UCS_OK;
+}
+
+static
+void
+destroy_worker (ucp_worker_h worker)
+{
+  ucp_worker_destroy (worker);
+}
+
+
+
+
 
 static int send_complete = 0;
 static int recv_complete = 0;
@@ -266,7 +214,7 @@ client_make_request(
   {
     struct sockaddr_in serv_addr = {
       .sin_family = AF_INET,
-      .sin_port = htons (8090)
+      .sin_port = htons (port)
     };
     if (inet_pton(AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
       fprintf(stderr, "Invalid address/Address not supported");
@@ -310,9 +258,13 @@ client_make_request(
         .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
         .cb.send = send_cb
       });
+      if (UCS_PTR_IS_ERR (request)) {
+        fprintf(stderr, "Client: Error making send request.\n");
+        return 1;
+      }
     }
     //ucp_ep_flush (client_ep);
-    fprintf(stderr, "Send initiated, yet not complete\n");
+    fprintf(stderr, "Send initiated, yet not completed\n");
 
 
     while (!send_complete) { ucp_worker_progress (ucp_worker); }
@@ -356,9 +308,9 @@ client_make_request(
 
 static
 int
-run_client (gaspi_ucx_ctx * ucx_ctx, char const * peer_ip, uint16_t peer_port)
+run_client (ucp_worker_h worker, char const * peer_ip, uint16_t peer_port)
 {
-  if (client_make_request(ucx_ctx->oob_server.default_worker, peer_ip, peer_port))
+  if (client_make_request(worker, peer_ip, peer_port))
   {
       return 1;
   }
@@ -423,23 +375,31 @@ main (int argc, char ** argv)
     abort_with_usage_message ();
   }
 
-  gaspi_ucx_ctx ucx_ctx;
-  if (initialize_stub_ucx_ctx (&ucx_ctx))
-  {
-    fprintf (stderr, "Initializing GASPI UCX context failed\n");
-    exit (1);
-  }
 
   if (config.is_server)
   {
-    ret = run_server (ucx_ctx.oob_server.ucp_ctx, ucx_ctx.oob_server.default_worker, config.v.server.host_port);
+    ret = run_server (config.v.server.host_port);
   }
   else
   {
-    ret = run_client (&ucx_ctx, config.v.client.peer_ip, config.v.client.peer_port);
-  }
+    ucp_context_h ucp_context = 0;
+    if (initialize_ucp_context (&ucp_context))
+    {
+      fprintf (stderr, "Initializing UCP context failed\n");
+      exit (1);
+    }
+    ucp_worker_h ucp_worker = 0;
+    if (create_worker (ucp_context, &ucp_worker))
+    {
+      fprintf (stderr, "Initializing UCP worker failed\n");
+      exit (1);
+    }
+  
+    ret = run_client (ucp_worker, config.v.client.peer_ip, config.v.client.peer_port);
 
-  cleanup_stub_ucx_ctx (&ucx_ctx);
+    destroy_worker (ucp_worker);
+    cleanup_ucp_context (ucp_context);
+  }
 
   return ret;
 }
