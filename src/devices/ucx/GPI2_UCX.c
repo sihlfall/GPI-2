@@ -49,49 +49,9 @@ int
 pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
                             const int i)
 {
-  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  /* gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx; */
 
-  if (!ucx_device_ctx->addresses[i].address_length)
-  {
-    struct ucx_dev_oob_response response;
-    ucx_dev_oob_client_make_request (
-      ucx_device_ctx->wpool->default_worker,
-      pgaspi_gethostname(i), gctx->config->dev_config.params.tcp.port, &response
-    );
-    fprintf(stderr, "Address length: %ld\n", response.length);
-
-    char * a = malloc(response.length);
-    memcpy(a, response.data, response.length);
-    ucx_device_ctx->addresses[i].address = (ucp_address_t *) a;
-    ucx_device_ctx->addresses[i].address_length = response.length;
-
-    ucx_dev_oob_client_cleanup_response (&response);
-  }
-
-  {
-    ucp_ep_params_t ep_params;
-    ucs_status_t ep_status;
-
-    ep_params.field_mask      = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS |
-                                UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE |
-                                UCP_EP_PARAM_FIELD_ERR_HANDLER |
-                                UCP_EP_PARAM_FIELD_USER_DATA;
-    ep_params.address         = ucx_device_ctx->addresses[i].address;
-    ep_params.err_mode        = UCP_ERR_HANDLING_MODE_PEER; // ?
-    ep_params.err_handler.cb  = NULL;
-    ep_params.err_handler.arg = NULL;
-    ep_params.user_data       = &ep_status;
-
-    ucs_status_t status = ucp_ep_create(ucx_device_ctx->wpool->default_worker, &ep_params, &ucx_device_ctx->eps[i]);
-    if (status != UCS_OK) {
-      fprintf(stderr, "Problem with ucp_ep_create\n");
-      GASPI_DEBUG_PRINT_ERROR ("Failed: ucp_ep_create");
-      return -1;
-    }
-  }
-
-  return 0;
-  //NOTIMPLEMENTED()
+  NOTIMPLEMENTED()
 }
 
 int
@@ -185,21 +145,11 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
     ucx_dev_ctx->addresses[gctx->rank].address = (ucp_address_t *) a;
     ucx_dev_ctx->addresses[gctx->rank].address_length = worker_attr.address_length;
 
-    struct ucx_dev_oob_response response = {
-      .data = (unsigned char *) worker_attr.address,
-      .length = worker_attr.address_length
-    };
-
-    fprintf(stderr, "Address length: %ld\n", response.length);
-
     /* initialize OOB TCP device */
     // TODO: Separate config for UCX device?
     ucx_dev_oob_server_initialize (
-      &ucx_dev_ctx->oob_server, wpool->default_worker, gctx->config->dev_config.params.tcp.port,
-      gctx->tnc, &response
+      &ucx_dev_ctx->oob_server, wpool->default_worker, gctx->config->dev_config.params.tcp.port
     );
-
-    ucp_worker_release_address (wpool->default_worker, worker_attr.address);
   }
 
   return ret;

@@ -1,6 +1,7 @@
 #include "oob.h"
 #include "GPI2_UCX.h"
 #include "ucp/api/ucp.h"
+#include "arpa/inet.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -189,24 +190,6 @@ static
 int
 run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t host_port)
 {
-  char * s = "Hello Urs and Guenti ";
-  size_t sl = strlen(s);
-  int n = 30;
-
-  char * response_string = (char *) calloc (n * sl + 1, 1);
-  {
-    char * p = response_string;
-    int i = 0;
-    for (; i < n; ++i, p += sl) memcpy (p, s, sl);
-    * p = '\0';
-  }
-
-  struct ucx_dev_oob_response const response = {
-      .data = (unsigned char *)response_string,
-      .length = strlen (response_string)
-  };
-  printf ("Response length: %ld\n", response.length);
-
   /* create worker */
   ucp_worker_h ucp_server_worker;
   if (create_oob_server_worker (ucp_context, &ucp_server_worker) != UCS_OK)
@@ -217,7 +200,7 @@ run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t ho
 
   struct ucx_dev_oob_server_thread server_thread;
 
-  if (ucx_dev_oob_server_initialize (&server_thread, ucp_server_worker, ucp_data_worker, host_port, 3, &response))
+  if (ucx_dev_oob_server_initialize (&server_thread, ucp_server_worker, host_port))
   {
       printf ("Could not start server.\n");
       return 1;
@@ -226,7 +209,6 @@ run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t ho
 
   if (pthread_create (&server_thread.server_tid, NULL, server_run, &server_thread)) {
     perror ("Failed to create server thread");
-    free (server_thread.response_buffer);
     return 1;
   }
 
@@ -245,22 +227,143 @@ run_server (ucp_context_h ucp_context, ucp_worker_h ucp_data_worker, uint16_t ho
   return 0;
 }
 
+
+
+
+/*
+ * Client
+ */
+
+static int send_complete = 0;
+static int recv_complete = 0;
+
+static void send_cb (void *request, ucs_status_t status, void *user_data)
+{
+  send_complete = 1;
+}
+
+static void client_recv_ack_cb (void *request, ucs_status_t status, size_t length, void *user_data)
+{
+  fprintf(stdout, "Client recv handler called\n");
+  recv_complete = 1;
+}
+
+static void
+err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
+{
+    printf("error handling callback was invoked with status %d (%s)\n",
+           status, ucs_status_string(status));
+    //connection_closed = 1;
+}
+
+static int
+client_make_request(
+  ucp_worker_h ucp_worker,
+  char const * hostip4, uint16_t port
+)
+{
+  fprintf(stderr, "Creating endpoint\n");
+
+  ucp_ep_h client_ep;
+  {
+    struct sockaddr_in serv_addr = {
+      .sin_family = AF_INET,
+      .sin_port = htons (8090)
+    };
+    if (inet_pton(AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
+      fprintf(stderr, "Invalid address/Address not supported");
+      return 1;
+    };
+  
+    ucs_status_t status = ucp_ep_create(
+      ucp_worker,
+      & (ucp_ep_params_t) {
+        .field_mask = UCP_EP_PARAM_FIELD_FLAGS |
+          UCP_EP_PARAM_FIELD_SOCK_ADDR   |
+          UCP_EP_PARAM_FIELD_ERR_HANDLER |
+          UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE,
+        .err_mode = UCP_ERR_HANDLING_MODE_PEER,
+        .err_handler = {
+          .cb = err_cb,
+          .arg = NULL
+        },
+        .flags = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER,
+        .sockaddr = {
+          .addr = (struct sockaddr *) & serv_addr,
+          .addrlen = sizeof (struct sockaddr_in)
+        }
+      },
+      &client_ep
+    );
+    if (status != UCS_OK)
+    {
+      fprintf(stderr, "Creating client EP failed\n");
+      return 1;
+    }
+  }
+
+  fprintf(stderr, "Client endpoint created\n");
+
+  {
+    ucs_status_ptr_t request = 0;
+    {
+      char cmd = 'x';
+      request = ucp_stream_send_nbx (client_ep, &cmd, 1, & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
+        .cb.send = send_cb
+      });
+    }
+    //ucp_ep_flush (client_ep);
+    fprintf(stderr, "Send initiated, yet not complete\n");
+
+
+    while (!send_complete) { ucp_worker_progress (ucp_worker); }
+    fprintf(stdout, "Client send complete\n");
+
+    ucp_request_free (request);
+  }
+
+  {
+    char msg = 0;
+    size_t chars_received = 0;
+    ucs_status_ptr_t request = ucp_stream_recv_nbx(
+      client_ep, &msg, 1, &chars_received,
+      & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
+        .flags = UCP_STREAM_RECV_FLAG_WAITALL,
+        .cb = { .recv_stream = client_recv_ack_cb }
+      }
+    );
+
+    while (!recv_complete) { ucp_worker_progress (ucp_worker); }
+    fprintf(stdout, "Client received %lu characters: %d\n", chars_received, msg);
+
+    ucp_request_free (request);
+  }
+
+  fprintf(stderr, "Closing and destroying ep\n");
+  /* To do: Ask for status and only close if not yet closed */
+  {
+    ucp_ep_flush (client_ep);
+    ucs_status_ptr_t request = ucp_ep_close_nbx (client_ep, & (ucp_request_param_t) {0});
+    if (request != NULL) {
+      while (ucp_request_check_status (request) == UCS_INPROGRESS) ucp_worker_progress (ucp_worker);
+    }
+    ucp_request_free (request);
+  }
+
+  fprintf(stdout, "Finished\n");
+  return 0;
+} 
+
 static
 int
 run_client (gaspi_ucx_ctx * ucx_ctx, char const * peer_ip, uint16_t peer_port)
 {
-  struct ucx_dev_oob_response response;
-
-  if (ucx_dev_oob_client_make_request(ucx_ctx->wpool->default_worker, peer_ip, peer_port, &response))
+  if (client_make_request(ucx_ctx->wpool->default_worker, peer_ip, peer_port))
   {
       return 1;
   }
-  
-  char * text = calloc(response.length + 1, sizeof (char));
-  memcpy (text, response.data, response.length);
-  ucx_dev_oob_client_cleanup_response (&response);
-
-  printf("Text read: %s\n", text);
 
   return 0;
 }
