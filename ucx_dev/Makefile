@@ -8,7 +8,7 @@ BIN=./bin
 INC=-I./stub/include -I../src/devices/ucx -I.
 LIBS=/home/cluster/local/lib64/libGPI2.la
 OBJ_NAMES_GPI2UCX=GPI2_UCX_ATOMIC.o GPI2_UCX_GRP.o GPI2_UCX_IO.o \
-  GPI2_UCX_PASSIVE.o GPI2_UCX_SEG.o GPI2_UCX.o oob.o \
+  GPI2_UCX_PASSIVE.o GPI2_UCX_SEG.o GPI2_UCX.o \
 	ucx_device.o
 OBJ_NAMES_STUB=GPI2.o GPI2_Utility.o
 

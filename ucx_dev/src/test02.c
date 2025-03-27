@@ -1,4 +1,4 @@
-#include "oob.h"
+#include "ucx_device.h"
 #include "GPI2_UCX.h"
 #include "ucp/api/ucp.h"
 #include "arpa/inet.h"
@@ -56,7 +56,7 @@ create_ucx_ctx_default_worker (gaspi_ucx_ctx * ucx_ctx)
 {
   ucp_worker_h worker;
   ucs_status_t status = ucp_worker_create (
-    ucx_ctx->ucp_ctx,
+    ucx_ctx->oob_server.ucp_ctx,
     & (ucp_worker_params_t) {
       .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
       .thread_mode = UCS_THREAD_MODE_SINGLE
@@ -65,7 +65,7 @@ create_ucx_ctx_default_worker (gaspi_ucx_ctx * ucx_ctx)
   );
   if (status != UCS_OK) return status;
 
-  ucx_ctx->default_worker = worker;
+  ucx_ctx->oob_server.default_worker = worker;
   return UCS_OK;
 }
 
@@ -73,7 +73,7 @@ static
 void
 destroy_ucx_ctx_default_worker (gaspi_ucx_ctx * ucx_ctx)
 {
-  ucp_worker_destroy (ucx_ctx->default_worker);
+  ucp_worker_destroy (ucx_ctx->oob_server.default_worker);
 }
 
 static
@@ -89,14 +89,14 @@ initialize_stub_ucx_ctx (gaspi_ucx_ctx * ucx_ctx)
       fprintf (stderr, "Initializing UCP context failed\n");
       return 1;
     }
-    ucx_ctx->ucp_ctx = ucp_context;
+    ucx_ctx->oob_server.ucp_ctx = ucp_context;
   }
 
   if (create_ucx_ctx_default_worker (ucx_ctx) != UCS_OK) goto err_create_default_worker;
   return 0;
 
 err_create_default_worker:
-  cleanup_ucp_context (ucx_ctx->ucp_ctx);
+  cleanup_ucp_context (ucx_ctx->oob_server.ucp_ctx);
   return 1;
 }
 
@@ -105,7 +105,7 @@ void
 cleanup_stub_ucx_ctx (gaspi_ucx_ctx * ucx_ctx)
 {
   destroy_ucx_ctx_default_worker (ucx_ctx);
-  cleanup_ucp_context (ucx_ctx->ucp_ctx);
+  cleanup_ucp_context (ucx_ctx->oob_server.ucp_ctx);
 }
 
 
@@ -358,7 +358,7 @@ static
 int
 run_client (gaspi_ucx_ctx * ucx_ctx, char const * peer_ip, uint16_t peer_port)
 {
-  if (client_make_request(ucx_ctx->default_worker, peer_ip, peer_port))
+  if (client_make_request(ucx_ctx->oob_server.default_worker, peer_ip, peer_port))
   {
       return 1;
   }
@@ -432,7 +432,7 @@ main (int argc, char ** argv)
 
   if (config.is_server)
   {
-    ret = run_server (ucx_ctx.ucp_ctx, ucx_ctx.default_worker, config.v.server.host_port);
+    ret = run_server (ucx_ctx.oob_server.ucp_ctx, ucx_ctx.oob_server.default_worker, config.v.server.host_port);
   }
   else
   {
