@@ -190,7 +190,7 @@ static void send_cb (void *request, ucs_status_t status, void *user_data)
 
 static void client_recv_ack_cb (void *request, ucs_status_t status, size_t length, void *user_data)
 {
-  fprintf(stdout, "Client recv handler called\n");
+  fprintf(stdout, "Client recv handler called with length %lu\n", length);
   recv_complete = 1;
 }
 
@@ -263,7 +263,6 @@ client_make_request(
         return 1;
       }
     }
-    //ucp_ep_flush (client_ep);
     fprintf(stderr, "Send initiated, yet not completed\n");
 
 
