@@ -71,7 +71,9 @@ server_run (void * args)
   //     while (!send_complete) { ucp_worker_progress (connection_args->worker); }
         fprintf(stdout, "Client send complete\n");
     
-        ucp_request_free (request);
+        if (request) ucp_request_free (request);
+        fprintf(stderr, "End of inner while loop reached\n");
+
       }  
     }
 
@@ -79,6 +81,8 @@ server_run (void * args)
     while (!myself->request_stop) {
       ucp_worker_progress(myself->ucp_worker);
     }
+
+    fprintf(stderr, "End of while loop reached\n");
   }
 
   pthread_exit (NULL);
