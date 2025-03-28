@@ -121,7 +121,7 @@ ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
 int
 ucx_dev_init_device (struct ucx_dev_args * args, ucx_device_t * ucx_device)
 {
-  ucp_config_t *config = NULL;
+  ucp_config_t * config = NULL;
   {
     ucs_status_t status = ucp_config_read("GPI2", NULL, &config);
     if (status != UCS_OK) {
@@ -135,7 +135,9 @@ ucx_dev_init_device (struct ucx_dev_args * args, ucx_device_t * ucx_device)
     ucs_status_t status = ucp_init (
       & (ucp_params_t) {
         .field_mask = UCP_PARAM_FIELD_FEATURES,
-        .features = UCP_FEATURE_STREAM
+        
+        /* We do need tag matching for send/recv. */
+        .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM
       },
       config,
       &ucp_context
