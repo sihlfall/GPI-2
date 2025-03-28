@@ -269,11 +269,10 @@ client_make_request(
     }
     fprintf(stderr, "Send initiated, yet not completed\n");
 
-
     while (!send_complete) { ucp_worker_progress (ucp_worker); }
     fprintf(stdout, "Client send complete\n");
 
-    ucp_request_free (request);
+    if (request) ucp_request_free (request);
   }
 
   {
@@ -287,11 +286,15 @@ client_make_request(
         .cb = { .recv_stream = client_recv_ack_cb }
       }
     );
+    if (UCS_PTR_IS_ERR (request)) {
+      fprintf(stderr, "Client: Error making receive request.\n");
+      return 1;
+    }
 
     while (!recv_complete) { ucp_worker_progress (ucp_worker); }
     fprintf(stdout, "Client received %lu characters: %d\n", chars_received, msg);
 
-    ucp_request_free (request);
+    if (request) ucp_request_free (request);
   }
 
   fprintf(stderr, "Closing and destroying ep\n");
