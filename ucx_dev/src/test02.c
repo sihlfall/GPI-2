@@ -7,87 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-
-
-
-static int server_received = 0;
-static size_t server_received_chars = 0;
-
-static void
-stream_recv_cb (void *request, ucs_status_t status, size_t length, void *user_data)
-{
-  fprintf(stderr, "Server receive cb called (length: %lu)\n", length);
-  server_received = 1;
-  server_received_chars = length;
-}
-
-static
-void *
-server_run (void * args)
-{
-  __attribute_maybe_unused__ int reterr = 0;
-  struct ucx_device * myself = (struct ucx_device *) args;
-
-  fprintf(stderr, "Server is listening\n");
-
-  while (!myself->should_stop) {
-    
-    if (!myself->ep) { ucp_worker_progress(myself->ucp_worker); continue; }
-
-    fprintf(stderr, "Endpoint recognized\n");
-
-    {
-      char msg = 0;
-      size_t chars_received = 0;
-      ucs_status_ptr_t request = ucp_stream_recv_nbx(
-        myself->ep, &msg, 1, &chars_received,
-        & (ucp_request_param_t) {
-          .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
-          .flags = UCP_STREAM_RECV_FLAG_WAITALL,
-          .cb = { .recv_stream = stream_recv_cb }
-        }
-      );
-
-      if (request != NULL)
-      {
-        while (!server_received) ucp_worker_progress (myself->ucp_worker);
-        chars_received = server_received_chars;
-      }
-
-      fprintf(stderr, "Server received %lu characters: %d\n", chars_received, msg);
-      fprintf(stderr, "Freeing request\n");
-
-      if (request) ucp_request_free (request);
-    }
-    {
-      {
-        ucs_status_ptr_t request = 0;
-        {
-          char cmd = 'A';
-          request = ucp_stream_send_nbx (myself->ep, &cmd, 1, & (ucp_request_param_t) {0});
-        }
-        ucp_ep_flush (myself->ep);
-    
-  //     while (!send_complete) { ucp_worker_progress (connection_args->worker); }
-        fprintf(stdout, "Client send complete\n");
-    
-        if (request) ucp_request_free (request);
-        fprintf(stderr, "End of inner while loop reached\n");
-
-      }  
-    }
-
-
-    while (!myself->should_stop) {
-      ucp_worker_progress(myself->ucp_worker);
-    }
-
-    fprintf(stderr, "End of while loop reached\n");
-  }
-
-  pthread_exit (NULL);
-}
-
+/*
+ * Server
+ */
 
 static
 int
@@ -136,13 +58,9 @@ err_init_device:
   return ret;
 }
 
-
-
-
 /*
  * Client
  */
-
 
 static
 ucs_status_t
@@ -164,7 +82,6 @@ cleanup_ucp_context (ucp_context_h ucp_context)
 {
   ucp_cleanup (ucp_context);
 }
-
 
 static
 ucs_status_t
@@ -189,39 +106,45 @@ destroy_worker (ucp_worker_h worker)
   ucp_worker_destroy (worker);
 }
 
-
-
-
-
 static int send_complete = 0;
-static int recv_complete = 0;
 
 static void send_cb (void *request, ucs_status_t status, void *user_data)
 {
   send_complete = 1;
 }
 
-static void client_recv_ack_cb (void *request, ucs_status_t status, size_t length, void *user_data)
+struct recv_ack_user_data {
+  char msg;
+  int recv_complete;
+  size_t length;
+};
+
+static
+void
+client_recv_ack_cb (void * request, ucs_status_t status, size_t length, void * user_data)
 {
-  fprintf(stdout, "Client recv handler called with length %lu\n", length);
-  recv_complete = 1;
+  struct recv_ack_user_data * recv_ack_user_data = (struct recv_ack_user_data *) user_data;
+  fprintf (stderr, "Client recv handler called\n");
+
+  recv_ack_user_data->length = length;
+  recv_ack_user_data->recv_complete = 1;
 }
 
-static void
-err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
+static
+void
+err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
 {
-    printf("error handling callback was invoked with status %d (%s)\n",
-           status, ucs_status_string(status));
-    //connection_closed = 1;
+  fprintf(stderr,
+    "error handling callback was invoked with status %d (%s)\n",
+    status, ucs_status_string (status)
+  );
 }
 
-static int
-client_make_request(
-  ucp_worker_h ucp_worker,
-  char const * hostip4, uint16_t port
-)
+static
+int
+client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t port)
 {
-  fprintf(stderr, "Creating endpoint\n");
+  fprintf (stderr, "Creating endpoint\n");
 
   ucp_ep_h client_ep;
   {
@@ -229,12 +152,12 @@ client_make_request(
       .sin_family = AF_INET,
       .sin_port = htons (port)
     };
-    if (inet_pton(AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
-      fprintf(stderr, "Invalid address/Address not supported");
+    if (inet_pton (AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
+      fprintf (stderr, "Invalid address/Address not supported");
       return 1;
     };
   
-    ucs_status_t status = ucp_ep_create(
+    ucs_status_t status = ucp_ep_create (
       ucp_worker,
       & (ucp_ep_params_t) {
         .field_mask = UCP_EP_PARAM_FIELD_FLAGS |
@@ -285,28 +208,32 @@ client_make_request(
   }
 
   {
-    char msg = 0;
-    size_t chars_received = 0;
-    ucs_status_ptr_t request = ucp_stream_recv_nbx(
-      client_ep, &msg, 1, &chars_received,
+    struct recv_ack_user_data recv_ack_user_data = {0};
+    ucs_status_ptr_t request = ucp_stream_recv_nbx (
+      client_ep, &recv_ack_user_data.msg, 1, &recv_ack_user_data.length,
       & (ucp_request_param_t) {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK,
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
         .flags = UCP_STREAM_RECV_FLAG_WAITALL,
-        .cb = { .recv_stream = client_recv_ack_cb }
+        .cb = { .recv_stream = client_recv_ack_cb },
+        .user_data = &recv_ack_user_data
       }
     );
-    if (UCS_PTR_IS_ERR (request)) {
-      fprintf(stderr, "Client: Error making receive request.\n");
+    if (UCS_PTR_IS_ERR (request))
+    {
+      fprintf (stderr, "Client: Error making receive request.\n");
+      ucp_request_free (request);
       return 1;
     }
+    if (request)
+    {
+      while (!recv_ack_user_data.recv_complete) { ucp_worker_progress (ucp_worker); }
+      ucp_request_free (request);
+    }
+    fprintf (stderr, "Client received %lu characters: %c (= %d)\n", recv_ack_user_data.length, recv_ack_user_data.msg, recv_ack_user_data.msg);
 
-    while (!recv_complete) { ucp_worker_progress (ucp_worker); }
-    fprintf(stdout, "Client received %lu characters: %d\n", chars_received, msg);
-
-    if (request) ucp_request_free (request);
   }
 
-  fprintf(stderr, "Closing and destroying ep\n");
+  fprintf (stderr, "Closing and destroying ep\n");
   /* To do: Ask for status and only close if not yet closed */
   {
     ucp_ep_flush (client_ep);
@@ -389,7 +316,6 @@ main (int argc, char ** argv)
   {
     abort_with_usage_message ();
   }
-
 
   if (config.is_server)
   {

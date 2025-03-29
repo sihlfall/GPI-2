@@ -61,6 +61,26 @@ void
 handle_handshake_receive (struct ucx_device_endpoint * endpoint)
 {
   fprintf(stderr, "Server received character: %c (= %d)\n", endpoint->handshake_buffer, endpoint->handshake_buffer);
+
+  endpoint->handshake_buffer = 'A';
+
+  {
+    {
+      ucs_status_ptr_t request = 0;
+      {
+        request = ucp_stream_send_nbx (endpoint->ep, &endpoint->handshake_buffer, 1, & (ucp_request_param_t) {0});
+      }
+
+      if (UCS_PTR_IS_ERR (request))
+      {
+        fprintf (stderr, "Error making ack send request\n");
+        ucp_request_free (request);
+        return;
+      }
+
+      if (request) ucp_request_free (request);
+    }  
+  }
 }
 
 static
@@ -98,6 +118,7 @@ handshake (ucx_device_t * ucx_device, struct ucx_device_endpoint * endpoint)
     if (UCS_PTR_IS_ERR (request))
     {
       fprintf (stderr, "Server: error making receive request\n");
+      ucp_request_free (request);
       return 1;
     }
 
@@ -105,25 +126,6 @@ handshake (ucx_device_t * ucx_device, struct ucx_device_endpoint * endpoint)
   }
 
   return 0;
-  /*
-  {
-    {
-      ucs_status_ptr_t request = 0;
-      {
-        char cmd = 'A';
-        request = ucp_stream_send_nbx (myself->ep, &cmd, 1, & (ucp_request_param_t) {0});
-      }
-      ucp_ep_flush (myself->ep);
-  
-//     while (!send_complete) { ucp_worker_progress (connection_args->worker); }
-      fprintf(stdout, "Client send complete\n");
-  
-      if (request) ucp_request_free (request);
-      fprintf(stderr, "End of inner while loop reached\n");
-
-    }  
-  }
-  */
 }
 
 static
@@ -138,6 +140,7 @@ ep_error_callback (void * args, ucp_ep_h ep, ucs_status_t status)
       fprintf (stderr, "Server: Closing endpoint ...\n");
       (void) ucp_ep_close_nb (endpoint->ep, UCP_EP_CLOSE_MODE_FORCE);
       * endpoint = (struct ucx_device_endpoint) {0};
+      fprintf (stderr, "Endpoint closed.\n");
     } break;
   default:
     {
