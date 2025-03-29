@@ -16,61 +16,185 @@
   do {                                        \
     if (!(cond)) {                            \
       reterr = 1;                             \
+      fprintf (stderr, (msg));                \
       perror ((msg));                         \
-      printf ((msg));                         \
       goto errlabel;                          \
     }                                         \
   } while (0);                 
 
-
-/**
- * Error handling callback.
- */
-static void
-err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
+static
+void *
+run_ucx_device (void * args)
 {
-    printf("error handling callback was invoked with status %d (%s)\n",
-           status, ucs_status_string(status));
-    //connection_closed = 1;
-}
+  struct ucx_device * myself = (struct ucx_device *) args;
 
-
-static void
-handle_connection (ucp_conn_request_h conn_request, void *args)
-{
-  ucx_device_t * ucx_device = (ucx_device_t *) args;
-
-  fprintf(stdout, "Connection handler called\n");
-
-  ucp_ep_h server_ep;
-  {
-    ucs_status_t status = ucp_ep_create(
-      ucx_device->ucp_worker,
-      & (ucp_ep_params_t) {
-        .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER |
-          UCP_EP_PARAM_FIELD_CONN_REQUEST,
-        .conn_request = conn_request,
-        .err_handler = {
-          .cb = err_cb,
-          .arg = NULL
-        }
-      },
-      &server_ep
-    );
-    if (status != UCS_OK) {
-      fprintf(stderr, "failed to create an endpoint on the server: (%s)\n",
-              ucs_status_string(status));
-      return;
-    }
+  while (!myself->should_stop) {
+    ucp_worker_progress(myself->ucp_worker);
   }
-  ucx_device->ep = server_ep;
-  fprintf(stderr, "Server endpoint created\n");
+
+  pthread_exit (NULL);
 }
 
 int
-ucx_dev_create_listener (
-  ucx_device_t * ucx_device, uint16_t port
-)
+ucx_dev_start_thread (ucx_device_t * ucx_device)
+{
+  ucx_device->should_stop = 0;
+  if (pthread_create (&ucx_device->server_tid, NULL, run_ucx_device, ucx_device)) {
+    perror ("Failed to create server thread");
+    return 1;
+  }
+
+  return 0;
+}
+
+void
+ucx_dev_stop_thread (ucx_device_t * ucx_device)
+{
+  /* TODO: remove from here! */
+  ucx_device->should_stop = 1;
+  (void) pthread_join (ucx_device->server_tid, NULL);
+  if (ucx_device->ep) ucp_ep_close_nb (ucx_device->ep, UCP_EP_CLOSE_MODE_FLUSH);
+}
+
+static
+void
+handle_handshake_receive (struct ucx_device_endpoint * endpoint)
+{
+  fprintf(stderr, "Server received character: %c (= %d)\n", endpoint->handshake_buffer, endpoint->handshake_buffer);
+}
+
+static
+void
+handshake_receive_callback (void * request, ucs_status_t status, size_t length, void * user_data)
+{
+  struct ucx_device_endpoint * endpoint = (struct ucx_device_endpoint *) user_data;
+
+  fprintf(stderr, "Server receive cb called (length: %lu)\n", length);
+
+  if (length > 0) handle_handshake_receive (endpoint);
+
+  fprintf(stderr, "Freeing request\n");
+  if (request) ucp_request_free (request);
+}
+
+static
+int
+handshake (ucx_device_t * ucx_device, struct ucx_device_endpoint * endpoint)
+{
+  {
+    size_t chars_received = 0;
+    ucs_status_ptr_t request = ucp_stream_recv_nbx(
+      endpoint->ep, &endpoint->handshake_buffer, 1, &chars_received,
+      & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
+        .flags = UCP_STREAM_RECV_FLAG_WAITALL,
+        .cb = {
+          .recv_stream = handshake_receive_callback
+        },
+        .user_data = endpoint
+      }
+    );
+
+    if (UCS_PTR_IS_ERR (request))
+    {
+      fprintf (stderr, "Server: error making receive request\n");
+      return 1;
+    }
+
+    if (request == NULL && chars_received > 0) handle_handshake_receive (endpoint);
+  }
+
+  return 0;
+  /*
+  {
+    {
+      ucs_status_ptr_t request = 0;
+      {
+        char cmd = 'A';
+        request = ucp_stream_send_nbx (myself->ep, &cmd, 1, & (ucp_request_param_t) {0});
+      }
+      ucp_ep_flush (myself->ep);
+  
+//     while (!send_complete) { ucp_worker_progress (connection_args->worker); }
+      fprintf(stdout, "Client send complete\n");
+  
+      if (request) ucp_request_free (request);
+      fprintf(stderr, "End of inner while loop reached\n");
+
+    }  
+  }
+  */
+}
+
+static
+void
+ep_error_callback (void * args, ucp_ep_h ep, ucs_status_t status)
+{
+  struct ucx_device_endpoint * endpoint = (struct ucx_device_endpoint *) args;
+
+  switch (status) {
+  case UCS_ERR_CONNECTION_RESET:
+    {
+      fprintf (stderr, "Server: Closing endpoint ...\n");
+      (void) ucp_ep_close_nb (endpoint->ep, UCP_EP_CLOSE_MODE_FORCE);
+      * endpoint = (struct ucx_device_endpoint) {0};
+    } break;
+  default:
+    {
+      fprintf (
+        stderr, "error handling callback was invoked with status %d (%s)\n", status, ucs_status_string (status)
+      );
+    }
+  }
+}
+
+static
+void
+handle_connection_callback (ucp_conn_request_h conn_request, void * args)
+{
+  ucx_device_t * ucx_device = (ucx_device_t *) args;
+
+  fprintf (stderr, "Connection handler called\n");
+
+  struct ucx_device_endpoint * new_endpoint = &ucx_device->endpoints[ucx_device->n_endpoints++];
+  * new_endpoint = (struct ucx_device_endpoint) {0};
+
+  ucs_status_t status = ucp_ep_create (
+    ucx_device->ucp_worker,
+    & (ucp_ep_params_t) {
+      .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER |
+        UCP_EP_PARAM_FIELD_CONN_REQUEST,
+      .conn_request = conn_request,
+      .err_handler = {
+        .cb = ep_error_callback,
+        .arg = new_endpoint
+      }
+    },
+    &new_endpoint->ep
+  );
+  if (status != UCS_OK) {
+    fprintf(stderr, "failed to create an endpoint on the server: (%s)\n",
+            ucs_status_string(status));
+    goto err_ep_create;
+  }
+
+  fprintf(stderr, "Server endpoint created\n");
+
+  /* To do: remove again later */
+  (void) handshake (ucx_device, new_endpoint);
+
+  return;
+
+  /* return 0; */
+
+err_ep_create:
+  --ucx_device->n_endpoints;
+  * new_endpoint = (struct ucx_device_endpoint) {0};
+  return;
+}
+
+int
+ucx_dev_create_listener (ucx_device_t * ucx_device, uint16_t port)
 {
   ucp_listener_h ucp_listener;
   {
@@ -88,7 +212,7 @@ ucx_dev_create_listener (
           .addrlen = sizeof (struct sockaddr_in)
         },
         .conn_handler = (ucp_listener_conn_handler_t) {
-          .cb = handle_connection,
+          .cb = handle_connection_callback,
           .arg = ucx_device
         }
       },
@@ -109,17 +233,16 @@ ucx_dev_create_listener (
 void
 ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
 {
-  /* TODO: remove from here! */
-  ucp_device->request_stop = 1;
-  if (ucp_device->ep) ucp_ep_close_nb (ucp_device->ep, UCP_EP_CLOSE_MODE_FLUSH);
-
-  if (ucp_device->ucp_listener) ucp_listener_destroy (ucp_device->ucp_listener);
-  ucp_device->ucp_listener = 0;
+  if (ucp_device->ucp_listener)
+  {
+    ucp_listener_destroy (ucp_device->ucp_listener);
+    ucp_device->ucp_listener = 0;
+  }
 }
 
 
 int
-ucx_dev_init_device (struct ucx_dev_args * args, ucx_device_t * ucx_device)
+ucx_dev_init_device (ucx_device_t * ucx_device)
 {
   ucp_config_t * config = NULL;
   {
@@ -183,7 +306,7 @@ err_config_read:
 }
 
 void
-ucx_dev_stop_device(struct ucx_device * ucx_device)
+ucx_dev_cleanup_device(struct ucx_device * ucx_device)
 {
 //  ucp_worker_destroy(wpool->default_worker);
   ucp_cleanup(ucx_device->ucp_ctx);

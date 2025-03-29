@@ -106,21 +106,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
   ucx_dev_ctx->eps = calloc(gctx->tnc, sizeof (ucp_ep_h));
 
-  struct ucx_dev_args *dev_args = malloc (sizeof (struct ucx_dev_args));
-
-  if (NULL == dev_args)
-  {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to allocate memory.");
-    return -1;
-  }
-
-  dev_args->peers_num = gctx->tnc;
-  dev_args->id = gctx->rank;
-  dev_args->port =
-    gctx->config->dev_config.params.tcp.port + gctx->local_rank;
-
-
-  if ( ucx_dev_init_device (dev_args, &ucx_dev_ctx->oob_server) != 0)
+  if ( ucx_dev_init_device (&ucx_dev_ctx->oob_server) != 0)
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
     return -1;
@@ -145,7 +131,7 @@ pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
       ucp_ep_close_nb (ucx_dev_ctx->eps[i], UCP_EP_CLOSE_MODE_FORCE);
     }
   }
-  ucx_dev_stop_device (&ucx_dev_ctx->oob_server);
+  ucx_dev_cleanup_device (&ucx_dev_ctx->oob_server);
   free (ucx_dev_ctx->eps);
   free (gctx->device->ctx);
   gctx->device->ctx = NULL;

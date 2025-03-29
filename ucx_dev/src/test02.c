@@ -30,7 +30,7 @@ server_run (void * args)
 
   fprintf(stderr, "Server is listening\n");
 
-  while (!myself->request_stop) {
+  while (!myself->should_stop) {
     
     if (!myself->ep) { ucp_worker_progress(myself->ucp_worker); continue; }
 
@@ -78,7 +78,7 @@ server_run (void * args)
     }
 
 
-    while (!myself->request_stop) {
+    while (!myself->should_stop) {
       ucp_worker_progress(myself->ucp_worker);
     }
 
@@ -93,38 +93,47 @@ static
 int
 run_server (uint16_t host_port)
 {
-  struct ucx_device server_thread;
-  if (ucx_dev_init_device (& (struct ucx_dev_args) {0}, &server_thread)) {
+  int ret = 0;
+
+  ucx_device_t ucx_device;
+  if (ucx_dev_init_device (&ucx_device)) {
     fprintf (stderr, "Could not create ucx_device\n");
-    return 1;
+    ret = 1;
+    goto err_init_device;
   }
 
-  if (ucx_dev_create_listener (&server_thread, host_port))
+  if (ucx_dev_start_thread (&ucx_device)) {
+    fprintf (stderr, "Could not start thread.\n");
+    ret = 1;
+    goto err_start_thread;
+  }
+
+  if (ucx_dev_create_listener (&ucx_device, host_port))
   {
-      fprintf (stderr, "Could not create listener.\n");
-      return 1;
+    fprintf (stderr, "Could not create listener.\n");
+    ret = 1;
+    goto err_create_listener;
   }
 
-
-  if (pthread_create (&server_thread.server_tid, NULL, server_run, &server_thread)) {
-    perror ("Failed to create server thread");
-    return 1;
-  }
-
-
-  printf("Server is running in a separate thread. Press any key to stop.\n");
+  fprintf(stderr, "Server is running in a separate thread. Press any key to stop.\n");
 
   /* Wait for keypress */
   getc (stdin);
 
-  fprintf (stderr, "Stopping server ...\n");
-  ucx_dev_cleanup_listener (&server_thread);
+  fprintf (stderr, "Removing listener ...\n");
+  ucx_dev_cleanup_listener (&ucx_device);
 
+err_create_listener:
+  fprintf (stderr, "Stopping ucx device thread ...\n");
+  ucx_dev_stop_thread (&ucx_device);
+
+err_start_thread:  
   fprintf (stderr, "Cleanup ...\n");
-  ucx_dev_stop_device (&server_thread);
+  ucx_dev_cleanup_device (&ucx_device);
   fprintf (stderr, "Server stopped.\n");
 
-  return 0;
+err_init_device:
+  return ret;
 }
 
 
