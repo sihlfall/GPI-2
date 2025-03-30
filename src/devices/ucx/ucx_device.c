@@ -65,78 +65,6 @@ ucx_dev_stop_thread (ucx_device_t * ucx_device)
 
 static
 void
-handle_handshake_receive (struct ucx_device_endpoint * endpoint)
-{
-  fprintf(stderr, "Server received character: %c (= %d)\n", endpoint->handshake_buffer, endpoint->handshake_buffer);
-
-  endpoint->handshake_buffer = 'A';
-
-  {
-    {
-      ucs_status_ptr_t request = 0;
-      {
-        request = ucp_stream_send_nbx (endpoint->ep, &endpoint->handshake_buffer, 1, & (ucp_request_param_t) {0});
-      }
-
-      if (UCS_PTR_IS_ERR (request))
-      {
-        fprintf (stderr, "Error making ack send request\n");
-        ucp_request_free (request);
-        return;
-      }
-
-      if (request) ucp_request_free (request);
-    }  
-  }
-}
-
-static
-void
-handshake_receive_callback (void * request, ucs_status_t status, size_t length, void * user_data)
-{
-  struct ucx_device_endpoint * endpoint = (struct ucx_device_endpoint *) user_data;
-
-  fprintf(stderr, "Server receive cb called (length: %lu)\n", length);
-
-  if (length > 0) handle_handshake_receive (endpoint);
-
-  fprintf(stderr, "Freeing request\n");
-  if (request) ucp_request_free (request);
-}
-
-static
-int
-handshake (ucx_device_t * ucx_device, struct ucx_device_endpoint * endpoint)
-{
-  {
-    size_t chars_received = 0;
-    ucs_status_ptr_t request = ucp_stream_recv_nbx(
-      endpoint->ep, &endpoint->handshake_buffer, 1, &chars_received,
-      & (ucp_request_param_t) {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
-        .flags = UCP_STREAM_RECV_FLAG_WAITALL,
-        .cb = {
-          .recv_stream = handshake_receive_callback
-        },
-        .user_data = endpoint
-      }
-    );
-
-    if (UCS_PTR_IS_ERR (request))
-    {
-      fprintf (stderr, "Server: error making receive request\n");
-      ucp_request_free (request);
-      return 1;
-    }
-
-    if (request == NULL && chars_received > 0) handle_handshake_receive (endpoint);
-  }
-
-  return 0;
-}
-
-static
-void
 ep_error_callback (void * args, ucp_ep_h ep, ucs_status_t status)
 {
   struct ucx_device_endpoint * endpoint = (struct ucx_device_endpoint *) args;
@@ -190,12 +118,7 @@ handle_connection_callback (ucp_conn_request_h conn_request, void * args)
 
   fprintf(stderr, "Server endpoint created\n");
 
-  /* To do: remove again later */
-  (void) handshake (ucx_device, new_endpoint);
-
   return;
-
-  /* return 0; */
 
 err_ep_create:
   --ucx_device->n_endpoints;
@@ -313,7 +236,7 @@ ucx_dev_init_device (ucx_device_t * ucx_device)
         .field_mask = UCP_PARAM_FIELD_FEATURES,
         
         /* We do need tag matching for send/recv. */
-        .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM | UCP_FEATURE_AM
+        .features = UCP_FEATURE_AM
       },
       config,
       &ucp_context

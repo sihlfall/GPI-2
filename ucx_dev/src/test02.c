@@ -69,7 +69,7 @@ initialize_ucp_context (ucp_context_h * ucp_context)
   ucs_status_t status = ucp_init (
     & (ucp_params_t) {
       .field_mask = UCP_PARAM_FIELD_FEATURES,
-      .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM | UCP_FEATURE_AM
+      .features = UCP_FEATURE_AM
     },
     NULL, ucp_context
   );
@@ -127,23 +127,6 @@ static void send_cb (void *request, ucs_status_t status, void *user_data)
   send_complete = 1;
 }
 
-struct recv_ack_user_data {
-  char msg;
-  int recv_complete;
-  size_t length;
-};
-
-static
-void
-client_recv_ack_cb (void * request, ucs_status_t status, size_t length, void * user_data)
-{
-  struct recv_ack_user_data * recv_ack_user_data = (struct recv_ack_user_data *) user_data;
-  fprintf (stderr, "Client recv handler called\n");
-
-  recv_ack_user_data->length = length;
-  recv_ack_user_data->recv_complete = 1;
-}
-
 static
 void
 err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
@@ -199,51 +182,6 @@ client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t por
   }
 
   fprintf(stderr, "Client endpoint created\n");
-
-  {
-    ucs_status_ptr_t request = 0;
-    {
-      char cmd = 'x';
-      request = ucp_stream_send_nbx (client_ep, &cmd, 1, & (ucp_request_param_t) {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
-        .cb.send = send_cb
-      });
-      if (UCS_PTR_IS_ERR (request)) {
-        fprintf(stderr, "Client: Error making send request.\n");
-        return 1;
-      }
-    }
-    fprintf(stderr, "Send initiated, yet not completed\n");
-
-    while (!send_complete) { ucp_worker_progress (ucp_worker); }
-    fprintf(stdout, "Client send complete\n");
-
-    if (request) ucp_request_free (request);
-  }
-
-  {
-    struct recv_ack_user_data recv_ack_user_data = {0};
-    ucs_status_ptr_t request = ucp_stream_recv_nbx (
-      client_ep, &recv_ack_user_data.msg, 1, &recv_ack_user_data.length,
-      & (ucp_request_param_t) {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
-        .flags = UCP_STREAM_RECV_FLAG_WAITALL,
-        .cb = { .recv_stream = client_recv_ack_cb },
-        .user_data = &recv_ack_user_data
-      }
-    );
-    if (UCS_PTR_IS_ERR (request))
-    {
-      fprintf (stderr, "Client: Error making receive request.\n");
-      return 1;
-    }
-    if (request)
-    {
-      while (!recv_ack_user_data.recv_complete) { ucp_worker_progress (ucp_worker); }
-      ucp_request_free (request);
-    }
-    fprintf (stderr, "Client received %lu characters: %c (= %d)\n", recv_ack_user_data.length, recv_ack_user_data.msg, recv_ack_user_data.msg);
-  }
 
   {
     send_complete = 0;
