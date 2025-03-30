@@ -1,5 +1,6 @@
 #include "ucx_device.h"
 #include "GPI2_UCX.h"
+#include "GASPI.h"
 #include "ucp/api/ucp.h"
 #include "arpa/inet.h"
 
@@ -13,12 +14,12 @@
 
 static
 int
-run_server (uint16_t host_port)
+run_server (uint16_t host_port, gaspi_rank_t rank)
 {
   int ret = 0;
 
   ucx_device_t ucx_device;
-  if (ucx_dev_init_device (&ucx_device)) {
+  if (ucx_dev_init_device (&ucx_device, rank)) {
     fprintf (stderr, "Could not create ucx_device\n");
     ret = 1;
     goto err_init_device;
@@ -139,7 +140,7 @@ err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
 
 static
 int
-client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t port)
+client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t port, gaspi_rank_t rank)
 {
   fprintf (stderr, "Creating endpoint\n");
 
@@ -186,7 +187,7 @@ client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t por
   {
     send_complete = 0;
     ucs_status_ptr_t request = ucp_am_send_nbx (
-      client_ep, UCX_DEV_HUHU, & (gaspi_rank_t) { 77 }, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+      client_ep, UCX_DEV_HUHU, &rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
         .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
         .cb = { .send = send_cb },
         .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_COPY_HEADER
@@ -223,7 +224,8 @@ int
 client_register_am_callback (ucp_worker_h ucp_worker)
 {
   ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker, & (ucp_am_handler_param_t) {
-    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS | UCP_AM_HANDLER_PARAM_FIELD_CB,
+    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
+      UCP_AM_HANDLER_PARAM_FIELD_CB,
     .id = UCX_DEV_REHU,
     .flags = UCP_AM_FLAG_WHOLE_MSG,
     .cb = am_rehu_callback
@@ -237,13 +239,13 @@ client_register_am_callback (ucp_worker_h ucp_worker)
 
 static
 int
-run_client (ucp_worker_h worker, char const * peer_ip, uint16_t peer_port)
+run_client (ucp_worker_h worker, char const * peer_ip, uint16_t peer_port, gaspi_rank_t rank)
 {
   if (client_register_am_callback (worker)) {
     return 1;
   }
 
-  if (client_make_request(worker, peer_ip, peer_port))
+  if (client_make_request(worker, peer_ip, peer_port, rank))
   {
       return 1;
   }
@@ -255,7 +257,7 @@ static
 void
 abort_with_usage_message (void)
 {
-  fprintf(stderr, "Usage:\ntest02 s host_port\ntest02 c peer_ip peer_port\n");
+  fprintf(stderr, "Usage:\ntest02 s host_port rank\ntest02 c peer_ip peer_port rank\n");
   exit (1);
 }
 
@@ -264,10 +266,12 @@ struct config {
   union {
     struct {
       uint16_t host_port;
+      gaspi_rank_t rank;
     } server;
     struct {
       char const * peer_ip;
       uint16_t peer_port;
+      gaspi_rank_t rank;
     } client;
   } v;
 };
@@ -285,23 +289,36 @@ main (int argc, char ** argv)
   {
     config.is_server = 1;
 
-    if (argc != 3) abort_with_usage_message ();
+    if (argc != 4) abort_with_usage_message ();
 
-    int tmp = atoi (argv[2]);
-    if (tmp > 0xffff || tmp < 0) abort_with_usage_message ();
-    config.v.server.host_port = (uint16_t) tmp;
+    {
+      int tmp = atoi (argv[2]);
+      if (tmp > 0xffff || tmp < 0) abort_with_usage_message ();
+      config.v.server.host_port = (uint16_t) tmp;
+    }
+    {
+      int tmp = atoi (argv[3]);
+      if (tmp < 0 || tmp >= UCX_DEVICE_MAX_RANKS) abort_with_usage_message ();
+      config.v.server.rank = (gaspi_rank_t) tmp;
+    }
   }
   else if (!strcmp (argv[1], "c"))
   {
     config.is_server = 0;
 
-    if (argc != 4) abort_with_usage_message ();
+    if (argc != 5) abort_with_usage_message ();
 
     config.v.client.peer_ip = argv[2];
-
-    int tmp = atoi (argv[3]);
-    if (tmp > 0xffff || tmp < 0) abort_with_usage_message ();
-    config.v.client.peer_port = (uint16_t) tmp;
+    {
+      int tmp = atoi (argv[3]);
+      if (tmp > 0xffff || tmp < 0) abort_with_usage_message ();
+      config.v.client.peer_port = (uint16_t) tmp;
+    }
+    {
+      int tmp = atoi (argv[4]);
+      if (tmp < 0 || tmp >= UCX_DEVICE_MAX_RANKS) abort_with_usage_message ();
+      config.v.client.rank = (gaspi_rank_t) tmp;
+    }
   }
   else
   {
@@ -310,7 +327,7 @@ main (int argc, char ** argv)
 
   if (config.is_server)
   {
-    ret = run_server (config.v.server.host_port);
+    ret = run_server (config.v.server.host_port, config.v.server.rank);
   }
   else
   {
@@ -327,7 +344,7 @@ main (int argc, char ** argv)
       exit (1);
     }
   
-    ret = run_client (ucp_worker, config.v.client.peer_ip, config.v.client.peer_port);
+    ret = run_client (ucp_worker, config.v.client.peer_ip, config.v.client.peer_port, config.v.client.rank);
 
     destroy_worker (ucp_worker);
     cleanup_ucp_context (ucp_context);

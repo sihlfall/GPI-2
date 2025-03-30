@@ -106,7 +106,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
   ucx_dev_ctx->eps = calloc(gctx->tnc, sizeof (ucp_ep_h));
 
-  if ( ucx_dev_init_device (&ucx_dev_ctx->oob_server) != 0)
+  if ( ucx_dev_init_device (&ucx_dev_ctx->oob_server, gctx->rank) != 0)
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
     return -1;

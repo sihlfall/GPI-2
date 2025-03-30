@@ -1,6 +1,7 @@
 #ifndef UCX_DEVICE_H_
 #define UCX_DEVICE_H_
 
+#include "GASPI.h"
 #include "ucp/api/ucp.h"
 
 #include <pthread.h>
@@ -8,24 +9,19 @@
 #include <stdint.h>
 
 #define UCX_DEVICE_MAX_ENDPOINTS 1024
-
-struct ucx_device_endpoint {
-  ucp_ep_h ep;
-  char handshake_buffer;
-};
+#define UCX_DEVICE_MAX_RANKS 128
 
 typedef struct ucx_device {
+  gaspi_rank_t rank;
   atomic_int should_stop;
   atomic_int is_running;
   pthread_t server_tid;
   ucp_worker_h ucp_worker;
   ucp_listener_h ucp_listener;
   ucp_context_h ucp_ctx;
-  size_t n_endpoints;
-  struct ucx_device_endpoint endpoints [UCX_DEVICE_MAX_ENDPOINTS];
 } ucx_device_t;
 
-int ucx_dev_init_device (ucx_device_t * ucx_device);
+int ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank);
 int ucx_dev_create_listener (ucx_device_t * ucx_device, uint16_t port);
 void ucx_dev_cleanup_listener (ucx_device_t * ucx_device);
 void ucx_dev_cleanup_device(ucx_device_t * ucx_device);
