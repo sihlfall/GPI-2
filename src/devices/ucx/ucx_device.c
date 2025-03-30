@@ -53,7 +53,14 @@ ucx_dev_stop_thread (ucx_device_t * ucx_device)
   /* TODO: remove from here! */
   ucx_device->should_stop = 1;
   (void) pthread_join (ucx_device->server_tid, NULL);
-  if (ucx_device->ep) ucp_ep_close_nb (ucx_device->ep, UCP_EP_CLOSE_MODE_FLUSH);
+  for (size_t i = 0; i < UCX_DEVICE_MAX_ENDPOINTS; ++i) {
+    struct ucx_device_endpoint * dev_ep = &ucx_device->endpoints[i];
+    if (dev_ep->ep)
+    {
+      ucp_ep_close_nb (dev_ep->ep, UCP_EP_CLOSE_MODE_FLUSH);
+      dev_ep->ep = 0;
+    }
+  }
 }
 
 static
@@ -243,6 +250,49 @@ ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
   }
 }
 
+static
+void
+send_rehu_complete_callback (void * request, ucs_status_t status, void * user_data)
+{
+  ucp_request_free (request);
+}
+
+static
+void
+send_rehu (ucp_ep_h ep)
+{
+  ucs_status_ptr_t request = ucp_am_send_nbx (
+    ep, UCX_DEV_REHU, & (gaspi_rank_t) { 55 }, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
+      .cb = { .send = send_rehu_complete_callback },
+      .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_COPY_HEADER
+    }
+  );
+  if (UCS_PTR_IS_ERR (request)) {
+    fprintf (stderr, "Server: Error sending REHU AM.\n");
+    return;
+  }
+  else if (request)
+  {
+    ucp_request_free (request);
+  }
+}
+
+static
+ucs_status_t
+am_huhu_callback (
+  void * arg, const void * header, size_t header_length, void * data, size_t length, const ucp_am_recv_param_t * param
+)
+{
+  gaspi_rank_t * rank = (gaspi_rank_t *) header;
+
+  fprintf (stderr, "Received a HUHU.\n");
+  fprintf (stderr, "Received rank: %d\n", (int) * rank);
+
+  send_rehu (param->reply_ep);
+
+  return UCS_OK;
+}
 
 int
 ucx_dev_init_device (ucx_device_t * ucx_device)
@@ -263,7 +313,7 @@ ucx_dev_init_device (ucx_device_t * ucx_device)
         .field_mask = UCP_PARAM_FIELD_FEATURES,
         
         /* We do need tag matching for send/recv. */
-        .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM
+        .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM | UCP_FEATURE_AM
       },
       config,
       &ucp_context
@@ -293,6 +343,19 @@ ucx_dev_init_device (ucx_device_t * ucx_device)
     }
   }
   
+  {
+    ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker, & (ucp_am_handler_param_t) {
+      .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS | UCP_AM_HANDLER_PARAM_FIELD_CB,
+      .id = UCX_DEV_HUHU,
+      .flags = UCP_AM_FLAG_WHOLE_MSG,
+      .cb = am_huhu_callback
+    });
+    if (status != UCS_OK) {
+      GASPI_DEBUG_PRINT_ERROR("setting AM HUHU callback failed: %d", status);
+      goto err_set_am_recv_handler;
+    }
+  }
+
   * ucx_device = (ucx_device_t) {
     .ucp_ctx = ucp_context,
     .ucp_worker = ucp_worker
@@ -300,8 +363,11 @@ ucx_dev_init_device (ucx_device_t * ucx_device)
 
   return 0;
 
+err_set_am_recv_handler:
+  ucp_worker_destroy (ucp_worker);
+
 err_worker_create:
-  ucp_cleanup(ucp_context);
+  ucp_cleanup (ucp_context);
 
 err_init:
 err_config_read:

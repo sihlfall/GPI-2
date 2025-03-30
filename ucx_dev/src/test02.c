@@ -69,7 +69,7 @@ initialize_ucp_context (ucp_context_h * ucp_context)
   ucs_status_t status = ucp_init (
     & (ucp_params_t) {
       .field_mask = UCP_PARAM_FIELD_FEATURES,
-      .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM
+      .features = UCP_FEATURE_TAG | UCP_FEATURE_STREAM | UCP_FEATURE_AM
     },
     NULL, ucp_context
   );
@@ -104,6 +104,20 @@ void
 destroy_worker (ucp_worker_h worker)
 {
   ucp_worker_destroy (worker);
+}
+
+static
+ucs_status_t
+am_rehu_callback (
+  void * arg, const void * header, size_t header_length, void * data, size_t length, const ucp_am_recv_param_t * param
+)
+{
+  gaspi_rank_t * rank = (gaspi_rank_t *) header;
+
+  fprintf (stderr, "Received a REHU.\n");
+  fprintf (stderr, "Received rank: %d\n", (int) * rank);
+
+  return UCS_OK;
 }
 
 static int send_complete = 0;
@@ -221,7 +235,6 @@ client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t por
     if (UCS_PTR_IS_ERR (request))
     {
       fprintf (stderr, "Client: Error making receive request.\n");
-      ucp_request_free (request);
       return 1;
     }
     if (request)
@@ -230,7 +243,26 @@ client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t por
       ucp_request_free (request);
     }
     fprintf (stderr, "Client received %lu characters: %c (= %d)\n", recv_ack_user_data.length, recv_ack_user_data.msg, recv_ack_user_data.msg);
+  }
 
+  {
+    send_complete = 0;
+    ucs_status_ptr_t request = ucp_am_send_nbx (
+      client_ep, UCX_DEV_HUHU, & (gaspi_rank_t) { 77 }, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
+        .cb = { .send = send_cb },
+        .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_COPY_HEADER
+      }
+    );
+    if (UCS_PTR_IS_ERR (request)) {
+      fprintf (stderr, "Client: Error sending AM.\n");
+      return 1;
+    }
+    if (request)
+    {
+      while (!send_complete) { ucp_worker_progress (ucp_worker); }
+      ucp_request_free (request);
+    }
   }
 
   fprintf (stderr, "Closing and destroying ep\n");
@@ -250,8 +282,29 @@ client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t por
 
 static
 int
+client_register_am_callback (ucp_worker_h ucp_worker)
+{
+  ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker, & (ucp_am_handler_param_t) {
+    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS | UCP_AM_HANDLER_PARAM_FIELD_CB,
+    .id = UCX_DEV_REHU,
+    .flags = UCP_AM_FLAG_WHOLE_MSG,
+    .cb = am_rehu_callback
+  });
+  if (status != UCS_OK) {
+    fprintf (stderr, "Client: Setting AM REHU callback failed: %d", status);
+    return 1;
+  }
+  return 0;
+}
+
+static
+int
 run_client (ucp_worker_h worker, char const * peer_ip, uint16_t peer_port)
 {
+  if (client_register_am_callback (worker)) {
+    return 1;
+  }
+
   if (client_make_request(worker, peer_ip, peer_port))
   {
       return 1;

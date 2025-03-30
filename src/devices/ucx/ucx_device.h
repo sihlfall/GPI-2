@@ -20,7 +20,6 @@ typedef struct ucx_device {
   pthread_t server_tid;
   ucp_worker_h ucp_worker;
   ucp_listener_h ucp_listener;
-  ucp_ep_h ep;
   ucp_context_h ucp_ctx;
   size_t n_endpoints;
   struct ucx_device_endpoint endpoints [UCX_DEVICE_MAX_ENDPOINTS];
@@ -33,6 +32,10 @@ void ucx_dev_cleanup_device(ucx_device_t * ucx_device);
 int ucx_dev_start_thread (ucx_device_t * ucx_device);
 void ucx_dev_stop_thread (ucx_device_t * ucx_device);
 
+enum ucx_dev_am {
+  UCX_DEV_HUHU = 1,
+  UCX_DEV_REHU = 2
+};
 
 
 #endif
