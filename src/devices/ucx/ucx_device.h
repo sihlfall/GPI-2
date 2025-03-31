@@ -19,6 +19,7 @@ typedef struct ucx_device {
   ucp_worker_h ucp_worker;
   ucp_listener_h ucp_listener;
   ucp_context_h ucp_ctx;
+  ucp_ep_h eps[UCX_DEVICE_MAX_RANKS];
 } ucx_device_t;
 
 int ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank);

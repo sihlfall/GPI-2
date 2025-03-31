@@ -198,8 +198,23 @@ am_huhu_callback (
   fprintf (stderr, "Received a HUHU.\n");
   fprintf (stderr, "Received rank: %d\n", (int) * rank);
 
+  if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))
+  {
+    fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
+    goto err;
+  }
+  if (* rank < 0 || * rank >= UCX_DEVICE_MAX_RANKS)
+  {
+    fprintf (stderr, "Invalid rank value");
+    /* TODO: Send error */
+    goto err;
+  }
+
+  /* To do: check we do not have and endpoint already */
+  ucx_device->eps[* rank] = param->reply_ep;
   send_rehu (param->reply_ep, ucx_device->rank);
 
+err:
   return UCS_OK;
 }
 
