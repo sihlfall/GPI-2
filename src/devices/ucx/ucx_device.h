@@ -26,16 +26,15 @@ typedef struct ucx_device {
   pthread_t server_tid;
   ucp_worker_h ucp_worker;
   ucp_listener_h ucp_listener;
+  uint16_t host_port;
   ucp_context_h ucp_ctx;
   struct ucx_device_endpoint endpoints[UCX_DEVICE_MAX_RANKS];
 } ucx_device_t;
 
-int ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank);
-int ucx_dev_create_listener (ucx_device_t * ucx_device, uint16_t port);
-void ucx_dev_cleanup_listener (ucx_device_t * ucx_device);
+int ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host_port);
+int ucx_dev_start_device (ucx_device_t * ucx_device);
+void ucx_dev_stop_device (ucx_device_t * ucx_device);
 void ucx_dev_cleanup_device(ucx_device_t * ucx_device);
-int ucx_dev_start_thread (ucx_device_t * ucx_device);
-void ucx_dev_stop_thread (ucx_device_t * ucx_device);
 
 enum ucx_dev_am {
   UCX_DEV_HUHU = 1,

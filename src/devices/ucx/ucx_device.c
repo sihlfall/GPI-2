@@ -22,39 +22,6 @@
     }                                         \
   } while (0);                 
 
-static
-void *
-run_ucx_device (void * args)
-{
-  struct ucx_device * myself = (struct ucx_device *) args;
-
-  while (!myself->should_stop) {
-    ucp_worker_progress(myself->ucp_worker);
-  }
-
-  pthread_exit (NULL);
-}
-
-int
-ucx_dev_start_thread (ucx_device_t * ucx_device)
-{
-  ucx_device->should_stop = 0;
-  if (pthread_create (&ucx_device->server_tid, NULL, run_ucx_device, ucx_device)) {
-    perror ("Failed to create server thread");
-    return 1;
-  }
-
-  return 0;
-}
-
-void
-ucx_dev_stop_thread (ucx_device_t * ucx_device)
-{
-  /* TODO: remove from here! */
-  ucx_device->should_stop = 1;
-  (void) pthread_join (ucx_device->server_tid, NULL);
-}
-
 
 static
 void
@@ -155,8 +122,9 @@ err_ep_create:
   return;
 }
 
+static
 int
-ucx_dev_create_listener (ucx_device_t * ucx_device, uint16_t port)
+ucx_dev_create_listener (ucx_device_t * ucx_device)
 {
   ucp_listener_h ucp_listener;
   {
@@ -169,7 +137,7 @@ ucx_dev_create_listener (ucx_device_t * ucx_device, uint16_t port)
           .addr = (struct sockaddr *) & (struct sockaddr_in) {
             .sin_family = AF_INET,
             .sin_addr.s_addr = INADDR_ANY,
-            .sin_port = htons (port)                    
+            .sin_port = htons (ucx_device->host_port)      
           },
           .addrlen = sizeof (struct sockaddr_in)
         },
@@ -192,6 +160,7 @@ ucx_dev_create_listener (ucx_device_t * ucx_device, uint16_t port)
   return 0;
 }
 
+static
 void
 ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
 {
@@ -201,6 +170,49 @@ ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
     ucp_device->ucp_listener = 0;
   }
 }
+
+static
+void *
+run_ucx_device (void * args)
+{
+  struct ucx_device * myself = (struct ucx_device *) args;
+
+  if (ucx_dev_create_listener (myself))
+  {
+    fprintf (stderr, "Creating listener failed\n");
+    goto err;
+  }
+
+  while (!myself->should_stop) {
+    ucp_worker_progress(myself->ucp_worker);
+  }
+
+  ucx_dev_cleanup_listener (myself);
+
+err:
+  /* TODO: Different return code in case of error. */
+  pthread_exit (NULL);
+}
+
+int
+ucx_dev_start_device (ucx_device_t * ucx_device)
+{
+  ucx_device->should_stop = 0;
+  if (pthread_create (&ucx_device->server_tid, NULL, run_ucx_device, ucx_device)) {
+    perror ("Failed to create server thread");
+    return 1;
+  }
+
+  return 0;
+}
+
+void
+ucx_dev_stop_device (ucx_device_t * ucx_device)
+{
+  ucx_device->should_stop = 1;
+  (void) pthread_join (ucx_device->server_tid, NULL);
+}
+
 
 static
 void
@@ -259,7 +271,7 @@ err:
 }
 
 int
-ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank)
+ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host_port)
 {
   ucp_config_t * config = NULL;
   {
@@ -325,7 +337,8 @@ ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank)
   * ucx_device = (ucx_device_t) {
     .rank = rank,
     .ucp_ctx = ucp_context,
-    .ucp_worker = ucp_worker
+    .ucp_worker = ucp_worker,
+    .host_port = host_port
   };
 
   return 0;
@@ -344,6 +357,6 @@ err_config_read:
 void
 ucx_dev_cleanup_device(struct ucx_device * ucx_device)
 {
-//  ucp_worker_destroy(wpool->default_worker);
-  ucp_cleanup(ucx_device->ucp_ctx);
+  ucp_worker_destroy (ucx_device->ucp_worker);
+  ucp_cleanup (ucx_device->ucp_ctx);
 }

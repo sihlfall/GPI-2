@@ -19,23 +19,16 @@ run_server (uint16_t host_port, gaspi_rank_t rank)
   int ret = 0;
 
   ucx_device_t ucx_device;
-  if (ucx_dev_init_device (&ucx_device, rank)) {
+  if (ucx_dev_init_device (&ucx_device, rank, host_port)) {
     fprintf (stderr, "Could not create ucx_device\n");
     ret = 1;
     goto err_init_device;
   }
 
-  if (ucx_dev_start_thread (&ucx_device)) {
+  if (ucx_dev_start_device (&ucx_device)) {
     fprintf (stderr, "Could not start thread.\n");
     ret = 1;
-    goto err_start_thread;
-  }
-
-  if (ucx_dev_create_listener (&ucx_device, host_port))
-  {
-    fprintf (stderr, "Could not create listener.\n");
-    ret = 1;
-    goto err_create_listener;
+    goto err_start_device;
   }
 
   fprintf(stderr, "Server is running in a separate thread. Press any key to stop.\n");
@@ -43,14 +36,10 @@ run_server (uint16_t host_port, gaspi_rank_t rank)
   /* Wait for keypress */
   getc (stdin);
 
-  fprintf (stderr, "Removing listener ...\n");
-  ucx_dev_cleanup_listener (&ucx_device);
-
-err_create_listener:
   fprintf (stderr, "Stopping ucx device thread ...\n");
-  ucx_dev_stop_thread (&ucx_device);
+  ucx_dev_stop_device (&ucx_device);
 
-err_start_thread:  
+err_start_device:
   fprintf (stderr, "Cleanup ...\n");
   ucx_dev_cleanup_device (&ucx_device);
   fprintf (stderr, "Server stopped.\n");
