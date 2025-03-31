@@ -55,24 +55,68 @@ ucx_dev_stop_thread (ucx_device_t * ucx_device)
   (void) pthread_join (ucx_device->server_tid, NULL);
 }
 
+
 static
 void
 ep_error_callback (void * args, ucp_ep_h ep, ucs_status_t status)
 {
+  struct ucx_device_endpoint * endpoint_entry = (struct ucx_device_endpoint *) args;
+
   switch (status) {
-  case UCS_ERR_CONNECTION_RESET:
-    {
-      fprintf (stderr, "Server: Closing endpoint ...\n");
-      (void) ucp_ep_close_nb (ep, UCP_EP_CLOSE_MODE_FORCE);
-      fprintf (stderr, "Endpoint closed.\n");
-    } break;
-  default:
-    {
-      fprintf (
-        stderr, "error handling callback was invoked with status %d (%s)\n", status, ucs_status_string (status)
-      );
+    case UCS_ERR_CONNECTION_RESET:
+      {
+        if (endpoint_entry)
+        {
+          * endpoint_entry = (struct ucx_device_endpoint) {0};
+        }
+
+        fprintf (stderr, "Server: Closing endpoint ...\n");
+        (void) ucp_ep_close_nb (ep, UCP_EP_CLOSE_MODE_FORCE);
+        fprintf (stderr, "Endpoint closed.\n");
+      } break;
+    default:
+      {
+        fprintf (
+          stderr, "error handling callback was invoked with status %d (%s)\n", status, ucs_status_string (status)
+        );
+      }
     }
+}
+
+static
+int
+register_ep (struct ucx_device * ucx_device, ucp_ep_h ep, gaspi_rank_t rank) {
+  if (rank >= UCX_DEVICE_MAX_RANKS)
+  {
+    fprintf (stderr, "Invalid rank value");
+    /* TODO: Send error */
+    goto err;
   }
+
+  struct ucx_device_endpoint * endpoint_entry = &ucx_device->endpoints[rank];
+  if (endpoint_entry->ucx_device) {
+    fprintf (stderr, "An endpoint has already been assigned to rank %d\n", (int) rank);
+    goto err;
+  }
+  * endpoint_entry = (struct ucx_device_endpoint) {
+    .ucx_device = ucx_device,
+    .rank = rank,
+    .ep = ep
+  };
+
+  ucp_ep_modify_nb (ep, & (ucp_ep_params_t) {
+    .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER | UCP_EP_PARAM_FIELD_USER_DATA,
+    .err_handler = {
+      .cb = ep_error_callback,
+      .arg = (void *) endpoint_entry
+    },
+    .user_data = (void *) endpoint_entry
+  });
+
+  return 0;
+
+err:
+  return 1;
 }
 
 static
@@ -92,7 +136,7 @@ handle_connection_callback (ucp_conn_request_h conn_request, void * arg)
       .conn_request = conn_request,
       .err_handler = {
         .cb = ep_error_callback,
-        .arg = new_endpoint
+        .arg = NULL
       }
     },
     &new_endpoint
@@ -203,15 +247,11 @@ am_huhu_callback (
     fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
     goto err;
   }
-  if (* rank < 0 || * rank >= UCX_DEVICE_MAX_RANKS)
-  {
-    fprintf (stderr, "Invalid rank value");
-    /* TODO: Send error */
+  if (register_ep (ucx_device, param->reply_ep, * rank)) {
+    fprintf (stderr, "Could not register endpoint for rank %d\n", * rank);
     goto err;
   }
 
-  /* To do: check we do not have and endpoint already */
-  ucx_device->eps[* rank] = param->reply_ep;
   send_rehu (param->reply_ep, ucx_device->rank);
 
 err:
