@@ -35,7 +35,7 @@ entry_get_data (entry_t e)
 static inline
 INDEX_TYPE
 entry_get_seq (entry_t e) {
-  return e >> 64;
+  return (e >> 64) & 3u;
 }
 
 static inline
@@ -58,24 +58,13 @@ buffer_get_pointer (struct mpmc_queue * q, INDEX_TYPE i)
   return &q->buffer[(i) & (BUFFER_SIZE - 1)];
 }
 
-void
-alf_queue_init (struct mpmc_queue * q)
-{
-  /*
-  for (INDEX_TYPE i = 0; i < BUFFER_SIZE; ++i)
-  {
-    __sync_val_compare_and_swap(buffer_get_pointer (q, i), 0, entry_create (0, i << 1));
-  }
-  */
-}
-
 int
 alf_enqueue (struct mpmc_queue * q, VALUE_TYPE d)
 {
   while (1)
   {
     INDEX_TYPE wr_index = __sync_val_compare_and_swap (&q->write_index, 0, 0);
-    INDEX_TYPE wr_seq = (wr_index / BUFFER_SIZE) << 1;
+    INDEX_TYPE wr_seq = (wr_index / BUFFER_SIZE & 1u) << 1;
     INDEX_TYPE seq = entry_get_seq (buffer_get_value (q, wr_index));
 
     if (seq == wr_seq)
@@ -88,11 +77,11 @@ alf_enqueue (struct mpmc_queue * q, VALUE_TYPE d)
       }
       return 1;
     }
-    else if (seq == (wr_seq | 1u) || seq == wr_seq + (1u << 1))
+    else if (seq == (wr_seq | 1u) || seq == (wr_seq ^ 2u))
     {
       (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
     }
-    else if (seq + (1u << 1) == (wr_seq | 1u))
+    else if (seq == ((wr_seq ^ 2u) | 1u))
     {
       return 0;
     }
@@ -105,12 +94,12 @@ alf_dequeue (struct mpmc_queue * q, VALUE_TYPE * d)
   while (1)
   {
     INDEX_TYPE rd_index = __sync_val_compare_and_swap (&q->read_index, 0, 0);
-    INDEX_TYPE rd_seq = (rd_index / BUFFER_SIZE) << 1;
+    INDEX_TYPE rd_seq = (rd_index / BUFFER_SIZE & 1u) << 1;
     entry_t e = __sync_val_compare_and_swap (buffer_get_pointer (q, rd_index), 0, 0);
     INDEX_TYPE seq = entry_get_seq (e);
     if (seq == (rd_seq | 1u))
     {
-      entry_t empty_entry = entry_create (0, rd_seq + (1u << 1));
+      entry_t empty_entry = entry_create (0, rd_seq ^ 2u);
       if (__sync_bool_compare_and_swap (buffer_get_pointer (q, rd_index), e, empty_entry))
       {
         * d = entry_get_data (e);
@@ -118,7 +107,7 @@ alf_dequeue (struct mpmc_queue * q, VALUE_TYPE * d)
         return 1;
       }
     }
-    else if ((seq | 1u) == ((rd_seq + (1u << 1)) | 1u))
+    else if ((seq | 1u) == ((rd_seq ^ 2u) | 1u))
     {
       (void) __sync_val_compare_and_swap (&q->read_index, rd_index, rd_index + 1);
     }

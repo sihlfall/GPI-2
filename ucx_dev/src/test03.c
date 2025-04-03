@@ -4,7 +4,6 @@
 
 int main () {
   struct mpmc_queue queue = {0};
-  alf_queue_init (&queue);
 
   int j = 0;
   for (int k = 0; k < 10; ++k)
