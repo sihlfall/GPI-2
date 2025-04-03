@@ -1,5 +1,6 @@
 {
   "files.associations": {
-    "tcp_device.h": "c"
+    "tcp_device.h": "c",
+    "stdatomic.h": "c"
   }
 }
