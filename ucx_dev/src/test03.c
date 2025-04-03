@@ -4,14 +4,17 @@
 
 int main () {
   struct mpmc_queue queue = {0};
-  queue_init (&queue);
+  alf_queue_init (&queue);
 
-  enqueue (&queue, 10);
-  enqueue (&queue, 20);
-  enqueue (&queue, 30);
+  int j = 0;
+  for (int k = 0; k < 10; ++k)
+  {
+    for (int i = 0; i < 500; ++i, ++j) alf_enqueue (&queue, 10 * j);
 
-  int v[3];
-  for (int i = 0; i < 3; ++i) dequeue (&queue, &v[i]);
-
-  printf ("%d %d %d\n", v[0], v[1], v[2]);
+    int v;
+    for (int i = 0; i < 500; ++i)
+    {
+      if (alf_dequeue (&queue, &v)) printf( "%d\n", v);
+    }
+  }
 }

@@ -16,8 +16,8 @@ struct mpmc_queue {
   _Atomic(entry_t) buffer[BUFFER_SIZE];
 };
 
-void queue_init (struct mpmc_queue * q);
-int enqueue (struct mpmc_queue * q, VALUE_TYPE d);
-int dequeue (struct mpmc_queue * q, VALUE_TYPE * d);
+void alf_queue_init (struct mpmc_queue * q);
+int alf_enqueue (struct mpmc_queue * q, VALUE_TYPE d);
+int alf_dequeue (struct mpmc_queue * q, VALUE_TYPE * d);
 
 #endif
