@@ -129,7 +129,7 @@ err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
 
 static
 int
-client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t port, gaspi_rank_t rank)
+client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t port, gaspi_rank_t * rank)
 {
   fprintf (stderr, "Creating endpoint\n");
 
@@ -176,10 +176,10 @@ client_make_request (ucp_worker_h ucp_worker, char const * hostip4, uint16_t por
   {
     send_complete = 0;
     ucs_status_ptr_t request = ucp_am_send_nbx (
-      client_ep, UCX_DEV_HUHU, &rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+      client_ep, UCX_DEV_HUHU, rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
         .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
         .cb = { .send = send_cb },
-        .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_COPY_HEADER
+        .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
       }
     );
     if (UCS_PTR_IS_ERR (request)) {
@@ -228,7 +228,7 @@ client_register_am_callback (ucp_worker_h ucp_worker)
 
 static
 int
-run_client (ucp_worker_h worker, char const * peer_ip, uint16_t peer_port, gaspi_rank_t rank)
+run_client (ucp_worker_h worker, char const * peer_ip, uint16_t peer_port, gaspi_rank_t * rank)
 {
   if (client_register_am_callback (worker)) {
     return 1;
@@ -333,7 +333,7 @@ main (int argc, char ** argv)
       exit (1);
     }
   
-    ret = run_client (ucp_worker, config.v.client.peer_ip, config.v.client.peer_port, config.v.client.rank);
+    ret = run_client (ucp_worker, config.v.client.peer_ip, config.v.client.peer_port, &config.v.client.rank);
 
     destroy_worker (ucp_worker);
     cleanup_ucp_context (ucp_context);

@@ -223,13 +223,13 @@ send_rehu_complete_callback (void * request, ucs_status_t status, void * user_da
 
 static
 void
-send_rehu (ucp_ep_h ep, gaspi_rank_t rank)
+send_rehu (ucp_ep_h ep, gaspi_rank_t * rank)
 {
   ucs_status_ptr_t request = ucp_am_send_nbx (
-    ep, UCX_DEV_REHU, &rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+    ep, UCX_DEV_REHU, rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
       .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
       .cb = { .send = send_rehu_complete_callback },
-      .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_COPY_HEADER
+      .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
     }
   );
   if (UCS_PTR_IS_ERR (request)) {
@@ -264,7 +264,7 @@ am_huhu_callback (
     goto err;
   }
 
-  send_rehu (param->reply_ep, ucx_device->rank);
+  send_rehu (param->reply_ep, &ucx_device->rank);
 
 err:
   return UCS_OK;
