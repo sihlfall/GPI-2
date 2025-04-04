@@ -34,14 +34,27 @@ entry_get_data (entry_t e)
 
 static inline
 INDEX_TYPE
-entry_get_seq (entry_t e) {
-  return (e >> 64) & 3u;
+entry_get_seq (entry_t e)
+{
+  return e >> 64;
 }
 
 static inline
 entry_t
-entry_create (VALUE_TYPE data, INDEX_TYPE seq) {
+entry_create (VALUE_TYPE data, INDEX_TYPE seq)
+{
   return ((entry_t) seq << 64) | (entry_t) data;
+}
+
+static inline
+INDEX_TYPE
+trunc_seq (INDEX_TYPE seq)
+{
+  /* We need a bitmask of bitsof(INDEX_TYPE) - log2(BUFFER_SIZE) + 1 ones */
+  INDEX_TYPE mask = (
+    ( (INDEX_TYPE) 1 << (8 * sizeof(INDEX_TYPE) - 1) ) / ((INDEX_TYPE) BUFFER_SIZE / 2) * 4 - 1
+  );
+  return seq & mask;
 }
 
 static inline
@@ -64,24 +77,25 @@ alf_enqueue (struct mpmc_queue * q, VALUE_TYPE d)
   while (1)
   {
     INDEX_TYPE wr_index = __sync_val_compare_and_swap (&q->write_index, 0, 0);
-    INDEX_TYPE wr_seq = (wr_index / BUFFER_SIZE & 1u) << 1;
+    INDEX_TYPE wr_seq = trunc_seq ((wr_index / BUFFER_SIZE) * 2);
     INDEX_TYPE seq = entry_get_seq (buffer_get_value (q, wr_index));
 
-    if (seq == wr_seq)
+    INDEX_TYPE delta = trunc_seq (seq - wr_seq);
+    if (delta == 0u)
     {
       entry_t e = entry_create (0, wr_seq);
-      entry_t data_entry = entry_create (d, wr_seq | 1u);
+      entry_t data_entry = entry_create (d, wr_seq + 1u);
       if (__sync_bool_compare_and_swap (buffer_get_pointer (q, wr_index), e, data_entry))
       {
           (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
       }
       return 1;
     }
-    else if (seq == (wr_seq | 1u) || seq == (wr_seq ^ 2u))
+    else if (delta <= 2u)
     {
       (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
     }
-    else if (seq == ((wr_seq ^ 2u) | 1u))
+    else if (delta == 3u)
     {
       return 0;
     }
@@ -94,12 +108,14 @@ alf_dequeue (struct mpmc_queue * q, VALUE_TYPE * d)
   while (1)
   {
     INDEX_TYPE rd_index = __sync_val_compare_and_swap (&q->read_index, 0, 0);
-    INDEX_TYPE rd_seq = (rd_index / BUFFER_SIZE & 1u) << 1;
+    INDEX_TYPE rd_seq = trunc_seq ((rd_index / BUFFER_SIZE) * 2);
     entry_t e = __sync_val_compare_and_swap (buffer_get_pointer (q, rd_index), 0, 0);
     INDEX_TYPE seq = entry_get_seq (e);
-    if (seq == (rd_seq | 1u))
+
+    INDEX_TYPE delta = trunc_seq (seq - rd_seq);
+    if (delta == 1u)
     {
-      entry_t empty_entry = entry_create (0, rd_seq ^ 2u);
+      entry_t empty_entry = entry_create (0, trunc_seq (rd_seq + 2u));
       if (__sync_bool_compare_and_swap (buffer_get_pointer (q, rd_index), e, empty_entry))
       {
         * d = entry_get_data (e);
@@ -107,13 +123,13 @@ alf_dequeue (struct mpmc_queue * q, VALUE_TYPE * d)
         return 1;
       }
     }
-    else if ((seq | 1u) == ((rd_seq ^ 2u) | 1u))
-    {
-      (void) __sync_val_compare_and_swap (&q->read_index, rd_index, rd_index + 1);
-    }
-    else if (seq == rd_seq)
+    else if (delta == 0u)
     {
       return 0;
+    }
+    else if (delta <= 3u)
+    {
+      (void) __sync_val_compare_and_swap (&q->read_index, rd_index, rd_index + 1);
     }
   }
 }
