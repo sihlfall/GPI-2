@@ -4,19 +4,21 @@
 #include <stdatomic.h>
 #include <stddef.h>
 
-#define VALUE_TYPE int
-#define INDEX_TYPE size_t
-#define BUFFER_SIZE 1024
+typedef int alf_value_type;
+typedef size_t alf_index_type;
+typedef ptrdiff_t alf_index_diff_type;
+
+#define alf_buffer_size ((alf_index_type) 1024)
 
 typedef __uint128_t entry_t;
 
 struct mpmc_queue {
-  _Atomic(INDEX_TYPE) write_index;
-  _Atomic(INDEX_TYPE) read_index;
-  _Atomic(entry_t) buffer[BUFFER_SIZE];
+  _Atomic(alf_index_type) write_index;
+  _Atomic(alf_index_type) read_index;
+  _Atomic(entry_t) buffer[alf_buffer_size];
 };
 
-int alf_enqueue (struct mpmc_queue * q, VALUE_TYPE d);
-int alf_dequeue (struct mpmc_queue * q, VALUE_TYPE * d);
+int alf_enqueue (struct mpmc_queue * q, alf_value_type d);
+int alf_dequeue (struct mpmc_queue * q, alf_value_type * d);
 
 #endif
