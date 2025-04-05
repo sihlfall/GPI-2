@@ -26,6 +26,9 @@
 #include "mpmc_queue.h"
 #include <stdint.h>
 
+// TODO: remove after debugging
+#include <stdio.h>
+
 /* Macros intended to be used for compile-time calculations. */
 /* Not to be used at run-time. */
 
@@ -119,7 +122,7 @@ alf_index_type
 seq_from_index (alf_index_type idx)
 {
   alf_index_type mask = ((alf_index_type) 1 << bitsof_seq) - (alf_index_type) 2;
-  return (idx >> bitsof_buffer_size) & mask;
+  return (idx >> (bitsof_buffer_size - 1)) & mask;
 }
 
 static inline
@@ -155,9 +158,9 @@ alf_enqueue (struct mpmc_queue * q, alf_value_type d)
       alf_entry_type data_entry = entry_create (d, wr_seq + 1u);
       if (__sync_bool_compare_and_swap (buffer_get_entry_ptr (q, wr_index), e, data_entry))
       {
-          (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
+        (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
+        return 1;
       }
-      return 1;
     }
     else if (delta <= 2u)
     {
@@ -177,7 +180,7 @@ alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
   {
     alf_index_type rd_index = load_atomic (&q->read_index);
     alf_index_type rd_seq = seq_from_index (rd_index);
-    alf_entry_type e = __sync_val_compare_and_swap (buffer_get_entry_ptr (q, rd_index), 0, 0);
+    alf_entry_type e = buffer_get_entry (q, rd_index);
     alf_index_type seq = entry_get_seq (e);
 
     alf_index_type delta = seq - rd_seq;
@@ -200,4 +203,12 @@ alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
       (void) __sync_val_compare_and_swap (&q->read_index, rd_index, rd_index + 1);
     }
   }
+}
+
+int
+alf_is_empty (struct mpmc_queue * q)
+{
+  alf_index_type rd_index = atomic_load (&q->read_index);
+  alf_entry_type e = buffer_get_entry (q, rd_index);
+  return entry_get_seq (e) == seq_from_index (rd_index);
 }
