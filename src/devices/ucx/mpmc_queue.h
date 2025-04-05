@@ -2,20 +2,20 @@
 #define MPMC_QUEUE_H_
 
 #include <stdatomic.h>
-#include <stddef.h>
+#include <stdint.h>
 
-typedef int alf_value_type;
-typedef size_t alf_index_type;
-typedef ptrdiff_t alf_index_diff_type;
+#define ALF_CACHELINESIZE 64
 
-#define alf_buffer_size ((alf_index_type) 1024)
+typedef int64_t alf_value_type;
+typedef uint64_t alf_index_type;
+typedef __uint128_t alf_entry_type;
 
-typedef __uint128_t entry_t;
+#define ALF_BUFFER_SIZE ((alf_index_type) 1024)
 
 struct mpmc_queue {
-  _Atomic(alf_index_type) write_index;
-  _Atomic(alf_index_type) read_index;
-  _Atomic(entry_t) buffer[alf_buffer_size];
+  _Alignas (2 * ALF_CACHELINESIZE) _Atomic(alf_index_type) write_index;
+  _Alignas (2 * ALF_CACHELINESIZE) _Atomic(alf_index_type) read_index;
+  _Alignas (2 * ALF_CACHELINESIZE) _Atomic(alf_entry_type) buffer[ALF_BUFFER_SIZE];
 };
 
 int alf_enqueue (struct mpmc_queue * q, alf_value_type d);

@@ -26,90 +26,117 @@
 #include "mpmc_queue.h"
 #include <stdint.h>
 
-#define NAIVE_LOG2(i) \
-  ((i) == ((uint64_t) 1) << 32 ? 32 : \
-   (i) == ((uint64_t) 1) << 31 ? 31 : \
-   (i) == ((uint64_t) 1) << 30 ? 30 : \
-   (i) == ((uint64_t) 1) << 29 ? 29 : \
-   (i) == ((uint64_t) 1) << 28 ? 28 : \
-   (i) == ((uint64_t) 1) << 27 ? 27 : \
-   (i) == ((uint64_t) 1) << 26 ? 26 : \
-   (i) == ((uint64_t) 1) << 25 ? 25 : \
-   (i) == ((uint64_t) 1) << 24 ? 24 : \
-   (i) == ((uint64_t) 1) << 23 ? 23 : \
-   (i) == ((uint64_t) 1) << 22 ? 22 : \
-   (i) == ((uint64_t) 1) << 21 ? 21 : \
-   (i) == ((uint64_t) 1) << 20 ? 20 : \
-   (i) == ((uint64_t) 1) << 19 ? 19 : \
-   (i) == ((uint64_t) 1) << 18 ? 18 : \
-   (i) == ((uint64_t) 1) << 17 ? 17 : \
-   (i) == ((uint64_t) 1) << 16 ? 16 : \
-   (i) == ((uint64_t) 1) << 15 ? 15 : \
-   (i) == ((uint64_t) 1) << 14 ? 14 : \
-   (i) == ((uint64_t) 1) << 13 ? 13 : \
-   (i) == ((uint64_t) 1) << 12 ? 12 : \
-   (i) == ((uint64_t) 1) << 11 ? 11 : \
-   (i) == ((uint64_t) 1) << 10 ? 10 : \
-   (i) == ((uint64_t) 1) <<  9 ?  9 : \
-   (i) == ((uint64_t) 1) <<  8 ?  8 : \
-   (i) == ((uint64_t) 1) <<  7 ?  7 : \
-   (i) == ((uint64_t) 1) <<  6 ?  6 : \
-   (i) == ((uint64_t) 1) <<  5 ?  5 : \
-   (i) == ((uint64_t) 1) <<  4 ?  4 : \
-   (i) == ((uint64_t) 1) <<  3 ?  3 : \
-   (i) == ((uint64_t) 1) <<  2 ?  2 : \
-   (i) == ((uint64_t) 1) <<  1 ?  1 : \
-   (i) == ((uint64_t) 1) <<  0 ?  0 : \
+/* Macros intended to be used for compile-time calculations. */
+/* Not to be used at run-time. */
+
+#define FLOOR_LOG2_16_BIT(i) \
+  ((i) >= ((uint64_t) 1) << 15 ? 15 : \
+   (i) >= ((uint64_t) 1) << 14 ? 14 : \
+   (i) >= ((uint64_t) 1) << 13 ? 13 : \
+   (i) >= ((uint64_t) 1) << 12 ? 12 : \
+   (i) >= ((uint64_t) 1) << 11 ? 11 : \
+   (i) >= ((uint64_t) 1) << 10 ? 10 : \
+   (i) >= ((uint64_t) 1) <<  9 ?  9 : \
+   (i) >= ((uint64_t) 1) <<  8 ?  8 : \
+   (i) >= ((uint64_t) 1) <<  7 ?  7 : \
+   (i) >= ((uint64_t) 1) <<  6 ?  6 : \
+   (i) >= ((uint64_t) 1) <<  5 ?  5 : \
+   (i) >= ((uint64_t) 1) <<  4 ?  4 : \
+   (i) >= ((uint64_t) 1) <<  3 ?  3 : \
+   (i) >= ((uint64_t) 1) <<  2 ?  2 : \
+   (i) >= ((uint64_t) 1) <<  1 ?  1 : \
+   (i) >= ((uint64_t) 1) <<  0 ?  0 : \
    -1                                 \
   )
 
-_Static_assert(NAIVE_LOG2(alf_buffer_size) != -1, "");
+#define FLOOR_LOG2(i) \
+  ((uint64_t)(i) >> 48 ? 48 + (FLOOR_LOG2_16_BIT((uint64_t)(i) >> 48)) : \
+   (uint64_t)(i) >> 32 ? 32 + (FLOOR_LOG2_16_BIT((uint64_t)(i) >> 32)) : \
+   (uint64_t)(i) >> 16 ? 16 + (FLOOR_LOG2_16_BIT((uint64_t)(i) >> 16)) : \
+   FLOOR_LOG2_16_BIT(i)                                                  \
+  )
 
+#define IS_POWER_OF_2(i) \
+  ((i) == ((uint64_t)1 << FLOOR_LOG2(i)))
+
+_Static_assert(FLOOR_LOG2(1) == 0, "");
+_Static_assert(FLOOR_LOG2(7) == 2, "");
+_Static_assert(FLOOR_LOG2(8) == 3, "");
+_Static_assert(FLOOR_LOG2(1u << 20) == 20, "");
+_Static_assert(FLOOR_LOG2((uint64_t)1 << 63) == 63, "");
+_Static_assert(FLOOR_LOG2(((uint64_t)1 << 63) + 1) == 63, "");
+_Static_assert(IS_POWER_OF_2(1), "");
+_Static_assert(IS_POWER_OF_2(2), "");
+_Static_assert(!IS_POWER_OF_2(3), "");
+_Static_assert(IS_POWER_OF_2((uint64_t)1 << 63), "");
+_Static_assert(!IS_POWER_OF_2(((uint64_t)1 << 63) + 1), "");
+
+/* Check consistency of sizes and types, define corresponding constants. */
+
+_Static_assert(IS_POWER_OF_2(ALF_BUFFER_SIZE) && ALF_BUFFER_SIZE >= 2, "");
+
+enum constants {
+  bitsof_value_type = 8 * sizeof(alf_value_type),
+  bitsof_index_type = 8 * sizeof(alf_index_type),
+  bitsof_entry_type = 8 * sizeof(alf_entry_type),
+  bitsof_buffer_size = FLOOR_LOG2(ALF_BUFFER_SIZE),
+  bitsof_seq = bitsof_index_type - bitsof_buffer_size + 1,
+  seq_offset = bitsof_entry_type - bitsof_seq
+};
+
+_Static_assert(bitsof_seq + bitsof_value_type <= bitsof_entry_type, "");
+_Static_assert(bitsof_seq < bitsof_index_type, "");
 
 static inline
 alf_value_type
-entry_get_data (entry_t e)
+entry_get_data (alf_entry_type e)
 {
   return (alf_value_type) e;
 }
 
 static inline
 alf_index_type
-entry_get_seq (entry_t e)
+entry_get_seq (alf_entry_type e)
 {
-  return e >> 64;
+  return e >> seq_offset;
 }
 
 static inline
-entry_t
+alf_entry_type
 entry_create (alf_value_type data, alf_index_type seq)
 {
-  return ((entry_t) seq << 64) | (entry_t) data;
+  /*
+   * The argument seq is permitted to overflow bitsof_seq. In this case,
+   * the function guarantees that seq will be truncated to bitsof_seq bits,
+   * so that entry_get_seq() will return a value not overflowing bitsof_seq.
+   */
+  _Static_assert(seq_offset + bitsof_seq == bitsof_entry_type, "");
+  return ((alf_entry_type) seq << seq_offset) | (alf_entry_type) data;
 }
 
 static inline
 alf_index_type
-trunc_seq (alf_index_type seq)
+seq_from_index (alf_index_type idx)
 {
-  /* We need a bitmask of bitsof(alf_index_type) - log2(alf_buffer_size) + 1 ones */
-  alf_index_type mask = (
-    ( (alf_index_type) 1 << (8 * sizeof(alf_index_type) - 1) ) / ((alf_index_type) alf_buffer_size / 2) * 4 - 1
-  );
-  return seq & mask;
+  alf_index_type mask = ((alf_index_type) 1 << bitsof_seq) - (alf_index_type) 2;
+  return (idx >> bitsof_buffer_size) & mask;
 }
 
 static inline
-entry_t
-buffer_get_value (struct mpmc_queue * q, alf_index_type i)
+_Atomic(alf_entry_type) *
+buffer_get_entry_ptr (struct mpmc_queue * q, alf_index_type i)
 {
-  return __sync_val_compare_and_swap (&q->buffer[(i) & (alf_buffer_size - 1)], 0, 0);
+  return &q->buffer[(i) & (ALF_BUFFER_SIZE - 1)];
 }
 
+#define load_atomic(ptr) \
+  (__sync_val_compare_and_swap ((ptr), 0, 0))
+
 static inline
-_Atomic(entry_t) *
-buffer_get_pointer (struct mpmc_queue * q, alf_index_type i)
+alf_entry_type
+buffer_get_entry (struct mpmc_queue * q, alf_index_type i)
 {
-  return &q->buffer[(i) & (alf_buffer_size - 1)];
+  return load_atomic (buffer_get_entry_ptr (q, i));
 }
 
 int
@@ -117,16 +144,16 @@ alf_enqueue (struct mpmc_queue * q, alf_value_type d)
 {
   while (1)
   {
-    alf_index_type wr_index = __sync_val_compare_and_swap (&q->write_index, 0, 0);
-    alf_index_type wr_seq = trunc_seq ((wr_index / alf_buffer_size) * 2);
-    alf_index_type seq = entry_get_seq (buffer_get_value (q, wr_index));
+    alf_index_type wr_index = load_atomic (&q->write_index);
+    alf_index_type wr_seq = seq_from_index (wr_index);
+    alf_index_type seq = entry_get_seq (buffer_get_entry (q, wr_index));
 
-    alf_index_type delta = trunc_seq (seq - wr_seq);
+    alf_index_type delta = seq - wr_seq;
     if (delta == 0u)
     {
-      entry_t e = entry_create (0, wr_seq);
-      entry_t data_entry = entry_create (d, wr_seq + 1u);
-      if (__sync_bool_compare_and_swap (buffer_get_pointer (q, wr_index), e, data_entry))
+      alf_entry_type e = entry_create (0, wr_seq);
+      alf_entry_type data_entry = entry_create (d, wr_seq + 1u);
+      if (__sync_bool_compare_and_swap (buffer_get_entry_ptr (q, wr_index), e, data_entry))
       {
           (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
       }
@@ -148,18 +175,18 @@ alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
 {
   while (1)
   {
-    alf_index_type rd_index = __sync_val_compare_and_swap (&q->read_index, 0, 0);
-    alf_index_type rd_seq = trunc_seq ((rd_index / alf_buffer_size) * 2);
-    entry_t e = __sync_val_compare_and_swap (buffer_get_pointer (q, rd_index), 0, 0);
+    alf_index_type rd_index = load_atomic (&q->read_index);
+    alf_index_type rd_seq = seq_from_index (rd_index);
+    alf_entry_type e = __sync_val_compare_and_swap (buffer_get_entry_ptr (q, rd_index), 0, 0);
     alf_index_type seq = entry_get_seq (e);
 
-    alf_index_type delta = trunc_seq (seq - rd_seq);
+    alf_index_type delta = seq - rd_seq;
     if (delta == 1u)
     {
-      entry_t empty_entry = entry_create (0, trunc_seq (rd_seq + 2u));
-      if (__sync_bool_compare_and_swap (buffer_get_pointer (q, rd_index), e, empty_entry))
+      alf_entry_type empty_entry = entry_create (0, rd_seq + 2u);
+      if (__sync_bool_compare_and_swap (buffer_get_entry_ptr (q, rd_index), e, empty_entry))
       {
-        * d = entry_get_data (e);
+        *d = entry_get_data (e);
         (void) __sync_val_compare_and_swap (&q->read_index, rd_index, rd_index + 1);
         return 1;
       }
