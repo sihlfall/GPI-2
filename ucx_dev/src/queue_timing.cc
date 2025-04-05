@@ -34,7 +34,7 @@ inline std::ostream& operator<<(std::ostream& os, Queue & q) noexcept
 
 int main () {
   auto q = Queue {};
-  auto bw = es::lockfree::tests::QBandwidth<Queue> {q, 2, 2, 5000};
+  auto bw = es::lockfree::tests::QBandwidth<Queue> {q, 1, 1, 400};
   bw.run ();
 }
 

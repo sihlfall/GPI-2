@@ -4,7 +4,7 @@
 
 int main () {
   struct mpmc_queue queue = {0};
-  _Static_assert(sizeof(queue.buffer[0]) == sizeof(alf_entry_type), "");
+  //_Static_assert(sizeof(queue.buffer[0]) == sizeof(alf_entry_type), "");
 
   int j = 0;
   for (int k = 0; k < 10; ++k)

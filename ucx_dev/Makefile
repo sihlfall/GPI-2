@@ -1,7 +1,7 @@
 C=gcc
 CC=g++
-CFLAGS=-std=c11 -pthread -Wall -pedantic -DDEBUG=1 -O3 -flto
-CCFLAGS=-std=c++20 -Wall -pedantic -O3 -flto
+CFLAGS=-std=c11 -pthread -Wall -pedantic -DDEBUG=1 -O3 -flto -march=native -mtune=native
+CCFLAGS=-std=c++20 -Wall -pedantic -O3 -flto -march=native -mtune=native
 LINKFLAGS=-pthread -lucp -lucs -flto
 SRC=./src
 SRC_GPI2UCX=../src/devices/ucx
