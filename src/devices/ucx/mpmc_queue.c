@@ -88,7 +88,6 @@ enum constants {
 };
 
 _Static_assert(bitsof_seq + bitsof_value_type <= bitsof_entry_type, "");
-_Static_assert(bitsof_seq < bitsof_index_type, "");
 
 static inline
 alf_value_type
@@ -119,9 +118,24 @@ entry_create (alf_value_type data, alf_index_type seq)
 
 static inline
 alf_index_type
+safe_shl (alf_index_type v, int offset)
+{
+  return offset >= 8 * sizeof(alf_index_type) ? 0 : v << offset;
+}
+
+static inline
+alf_index_type
+seq_cast (alf_index_type seq_with_overflow)
+{
+  alf_index_type mask = safe_shl (1, bitsof_seq) - (alf_index_type) 1;
+  return seq_with_overflow & mask;
+}
+
+static inline
+alf_index_type
 seq_from_index (alf_index_type idx)
 {
-  alf_index_type mask = ((alf_index_type) 1 << bitsof_seq) - (alf_index_type) 2;
+  alf_index_type mask = safe_shl (1, bitsof_seq) - (alf_index_type) 2;
   return (idx >> (bitsof_buffer_size - 1)) & mask;
 }
 
@@ -151,8 +165,8 @@ alf_enqueue (struct mpmc_queue * q, alf_value_type d)
     alf_index_type wr_seq = seq_from_index (wr_index);
     alf_index_type seq = entry_get_seq (buffer_get_entry (q, wr_index));
 
-    alf_index_type delta = seq - wr_seq;
-    if (delta == 0u)
+    alf_index_type delta = seq_cast (seq - wr_seq + 1u);
+    if (delta == 1u)
     {
       alf_entry_type e = entry_create (0, wr_seq);
       alf_entry_type data_entry = entry_create (d, wr_seq + 1u);
@@ -162,13 +176,13 @@ alf_enqueue (struct mpmc_queue * q, alf_value_type d)
         return 1;
       }
     }
-    else if (delta <= 2u)
-    {
-      (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
-    }
-    else if (delta == 3u)
+    else if (delta == 0u)
     {
       return 0;
+    }
+    else if (delta <= 3u)
+    {
+      (void) __sync_val_compare_and_swap (&q->write_index, wr_index, wr_index + 1);
     }
   }
 }
@@ -183,7 +197,7 @@ alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
     alf_entry_type e = buffer_get_entry (q, rd_index);
     alf_index_type seq = entry_get_seq (e);
 
-    alf_index_type delta = seq - rd_seq;
+    alf_index_type delta = seq_cast (seq - rd_seq);
     if (delta == 1u)
     {
       alf_entry_type empty_entry = entry_create (0, rd_seq + 2u);
