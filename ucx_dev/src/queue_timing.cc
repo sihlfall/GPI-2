@@ -4,11 +4,12 @@
 #include <tuple>
 
 extern "C" {
+#include "mpmc_queue.h"
 #include "queue_timing_cpp_interop.h"
 }
 
 struct Queue {
-  using value_type = int64_t;
+  using value_type = alf_value_type;
 
   Queue () : q{nullptr} {
     this->q = queue_create();
@@ -17,13 +18,13 @@ struct Queue {
     if (this->q) queue_destroy (this->q);
   }
   bool push (int64_t v) {
-    return !!queue_push (this->q, v);
+    return !!alf_enqueue (this->q, v);
   }
   bool pop (int64_t & v) {
-    return !!queue_pop (this->q, &v);
+    return !!alf_dequeue (this->q, &v);
   }
   bool empty () const {
-    return !!queue_is_empty (this->q);
+    return !!alf_is_empty (this->q);
   }
 
   struct mpmc_queue * q;
@@ -44,7 +45,7 @@ static void abort_with_usage_message () {
 static auto parse_cmd_line_arguments (int argc, char ** argv) {
   if (argc > 4) abort_with_usage_message ();
   int n_producers = argc > 1 ? atoi (argv[1]) : 1;
-  int n_consumers = argc > 2 ? atoi (argv[2]) : 2;
+  int n_consumers = argc > 2 ? atoi (argv[2]) : 1;
   int time_in_ms = argc > 3 ? atoi (argv[3]) : 400;
   if (n_producers <= 0 || n_consumers <= 0 || time_in_ms <= 0) abort_with_usage_message ();
   return std::make_tuple (

@@ -1,4 +1,4 @@
-#include "mpmc_queue.h"
+#include "mpmc_queue_struct.h"
 #include <stdio.h>
 #include <stdlib.h>
 

@@ -24,6 +24,8 @@
  * SOFTWARE.
  */
 #include "mpmc_queue.h"
+#include "mpmc_queue_struct.h"
+
 #include <stdint.h>
 
 // TODO: remove after debugging
