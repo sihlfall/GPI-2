@@ -23,7 +23,7 @@ $(BIN):
 	mkdir -p bin
 
 $(BIN)/queue_timing: $(BIN)/mpmc_queue.o $(BIN)/queue_timing.o $(BIN)/queue_timing_cpp_interop.o
-	$(C) -o $@ $^ $(LINKFLAGS) -lstdc++
+	$(C) -o $@ $^ $(LINKFLAGS) -lstdc++ -latomic
 
 $(BIN)/test01: $(BIN)/test01.o $(OBJS_GPI2UCX) $(OBJS_STUB)
 	$(C) -o $@ $^ $(LINKFLAGS) 
@@ -32,7 +32,7 @@ $(BIN)/test02: $(BIN)/test02.o $(OBJS_GPI2UCX) $(OBJS_STUB)
 	$(C) -o $@ $^ $(LINKFLAGS)
 
 $(BIN)/test03: $(BIN)/test03.o $(BIN)/mpmc_queue.o
-	$(C) -o $@ $^ $(LINKFLAGS)
+	$(C) -o $@ $^ $(LINKFLAGS) -latomic
 
 $(BIN)/queue_timing.o: $(SRC)/queue_timing.cc
 	$(CC) $(CCFLAGS) $< -c -o $@ $(INC)
