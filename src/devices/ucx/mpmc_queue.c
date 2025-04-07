@@ -166,33 +166,44 @@ buffer_get_entry_ptr (struct mpmc_queue * q, alf_index_type i)
 int
 alf_enqueue (struct mpmc_queue * q, alf_value_type d)
 {
+  alf_index_type wr_index = load_atomic (&q->write_index, memory_order_relaxed);
   while (1)
   {
-    alf_index_type wr_index = load_atomic (&q->write_index, memory_order_acquire);
     alf_index_type wr_seq = seq_from_index (wr_index);
-    alf_index_type seq = entry_get_seq (load_atomic (buffer_get_entry_ptr (q, wr_index), memory_order_relaxed));
+    alf_index_type seq = entry_get_seq (
+      load_atomic (buffer_get_entry_ptr (q, wr_index), memory_order_relaxed)
+    );
 
     alf_index_type delta = seq_cast (seq - wr_seq + 1u);
-    if (delta == 1u)
-    {
-      alf_entry_type e = entry_create (0, wr_seq);
-      alf_entry_type data_entry = entry_create (d, wr_seq + 1u);
-      if (bool_compare_and_swap_atomic_strong (
-        buffer_get_entry_ptr (q, wr_index), &e, data_entry,
-        memory_order_relaxed, memory_order_relaxed
-      ))
-      {
-        (void) bool_compare_and_swap_atomic_weak (&q->write_index, &wr_index, wr_index + 1, memory_order_release, memory_order_relaxed);
-        return 1;
-      }
-    }
-    else if (delta == 0u)
-    {
+    switch (delta) {
+    case 0u:
       return 0;
-    }
-    else if (delta <= 3u)
-    {
-      (void) bool_compare_and_swap_atomic_strong (&q->write_index, &wr_index, wr_index + 1, memory_order_relaxed, memory_order_relaxed);
+    case 1u:
+      {
+        alf_entry_type e = entry_create (0, wr_seq);
+        alf_entry_type data_entry = entry_create (d, wr_seq + 1u);
+        if (bool_compare_and_swap_atomic_strong (
+          buffer_get_entry_ptr (q, wr_index), &e, data_entry,
+          memory_order_relaxed, memory_order_relaxed
+        ))
+        {
+          (void) bool_compare_and_swap_atomic_weak (
+            &q->write_index, &wr_index, wr_index + 1,
+            memory_order_relaxed, memory_order_relaxed
+          );
+          return 1;
+        }
+      }
+      break;
+    case 2u:
+    case 3u:
+      if (bool_compare_and_swap_atomic_strong (
+        &q->write_index, &wr_index, wr_index + 1, memory_order_relaxed, memory_order_relaxed
+      )) break;
+      /* else fallthrough */
+    default:
+      wr_index = load_atomic (&q->write_index, memory_order_relaxed);
+      break;
     }
   }
 }
@@ -200,34 +211,43 @@ alf_enqueue (struct mpmc_queue * q, alf_value_type d)
 int
 alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
 {
+  alf_index_type rd_index = load_atomic (&q->read_index, memory_order_relaxed);
   while (1)
   {
-    alf_index_type rd_index = load_atomic (&q->read_index, memory_order_acquire);
     alf_index_type rd_seq = seq_from_index (rd_index);
     alf_entry_type e = load_atomic (buffer_get_entry_ptr (q, rd_index), memory_order_relaxed);
     alf_index_type seq = entry_get_seq (e);
 
     alf_index_type delta = seq_cast (seq - rd_seq);
-    if (delta == 1u)
-    {
-      alf_entry_type empty_entry = entry_create (0, rd_seq + 2u);
-      if (bool_compare_and_swap_atomic_strong (
-        buffer_get_entry_ptr (q, rd_index), &e, empty_entry,
-        memory_order_relaxed, memory_order_relaxed
-      ))
-      {
-        *d = entry_get_data (e);
-        (void) bool_compare_and_swap_atomic_weak (&q->read_index, &rd_index, rd_index + 1, memory_order_release, memory_order_relaxed);
-        return 1;
-      }
-    }
-    else if (delta == 0u)
-    {
+    switch (delta) {
+    case 0u:
       return 0;
-    }
-    else if (delta <= 3u)
-    {
-      (void) bool_compare_and_swap_atomic_strong (&q->read_index, &rd_index, rd_index + 1, memory_order_relaxed, memory_order_relaxed);
+    case 1u:
+      {
+        alf_entry_type empty_entry = entry_create (0, rd_seq + 2u);
+        if (bool_compare_and_swap_atomic_strong (
+          buffer_get_entry_ptr (q, rd_index), &e, empty_entry,
+          memory_order_relaxed, memory_order_relaxed
+        ))
+        {
+          *d = entry_get_data (e);
+          (void) bool_compare_and_swap_atomic_weak (
+            &q->read_index, &rd_index, rd_index + 1,
+            memory_order_relaxed, memory_order_relaxed
+          );
+          return 1;
+        }
+      }
+      break;
+    case 2u:
+    case 3u:
+      if (bool_compare_and_swap_atomic_strong (
+        &q->read_index, &rd_index, rd_index + 1, memory_order_relaxed, memory_order_relaxed
+      )) break;
+      /* else fallthrough */
+    default:
+      rd_index = load_atomic (&q->read_index, memory_order_relaxed);
+      break;
     }
   }
 }
@@ -235,7 +255,7 @@ alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
 int
 alf_is_empty (struct mpmc_queue * q)
 {
-  alf_index_type rd_index = load_atomic (&q->read_index, memory_order_acquire);
+  alf_index_type rd_index = load_atomic (&q->read_index, memory_order_relaxed);
   alf_entry_type e = load_atomic (buffer_get_entry_ptr (q, rd_index), memory_order_relaxed);
   return entry_get_seq (e) == seq_from_index (rd_index);
 }
