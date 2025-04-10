@@ -9,7 +9,7 @@ extern "C" {
 }
 
 struct Queue {
-  using value_type = alf_value_type;
+  using value_type = uint64_t;
 
   Queue () : q{nullptr} {
     this->q = queue_create();
@@ -17,11 +17,15 @@ struct Queue {
   ~Queue () {
     if (this->q) queue_destroy (this->q);
   }
-  bool push (int64_t v) {
-    return !!alf_enqueue (this->q, v);
+  bool push (uint64_t v) {
+    using Pair = struct alf_tag_payload_pair;
+    return !!alf_enqueue (this->q, Pair { .payload = v });
   }
-  bool pop (int64_t & v) {
-    return !!alf_dequeue (this->q, &v);
+  bool pop (uint64_t & v) {
+    struct alf_tag_payload_pair p = {0};
+    int ok = !!alf_dequeue (this->q, &p);
+    if (ok) v = p.payload;
+    return !!ok;
   }
   bool empty () const {
     return !!alf_is_empty (this->q);

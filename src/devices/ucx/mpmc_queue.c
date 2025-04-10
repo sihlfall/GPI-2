@@ -84,17 +84,43 @@ enum constants {
   bitsof_index_type = 8 * sizeof(alf_index_type),
   bitsof_entry_type = 8 * sizeof(alf_entry_type),
   bitsof_buffer_size = FLOOR_LOG2(ALF_BUFFER_SIZE),
-  bitsof_seq = bitsof_index_type - bitsof_buffer_size + 1,
+  bitsof_tag = bitsof_buffer_size - 1,
+  bitsof_seq = bitsof_index_type - bitsof_tag,
   seq_offset = bitsof_entry_type - bitsof_seq
 };
 
 _Static_assert(bitsof_seq + bitsof_value_type <= bitsof_entry_type, "");
 
 static inline
-alf_value_type
+alf_index_type
+safe_shl (alf_index_type v, int offset)
+{
+  return offset >= 8 * sizeof(alf_index_type) ? 0 : v << offset;
+}
+
+static inline
+alf_index_type
+tag_cast (alf_index_type tag) {
+  alf_index_type mask = safe_shl (1, bitsof_tag) - (alf_index_type) 1;
+  return tag & mask;
+}
+
+static inline
+alf_index_type
+seq_cast (alf_index_type seq_with_overflow)
+{
+  alf_index_type mask = safe_shl (1, bitsof_seq) - (alf_index_type) 1;
+  return seq_with_overflow & mask;
+}
+
+static inline
+struct alf_tag_payload_pair
 entry_get_data (alf_entry_type e)
 {
-  return (alf_value_type) e;
+  return (struct alf_tag_payload_pair) {
+    .tag = tag_cast (e >> bitsof_value_type),
+    .payload = (alf_value_type) e
+  };
 }
 
 static inline
@@ -106,7 +132,7 @@ entry_get_seq (alf_entry_type e)
 
 static inline
 alf_entry_type
-entry_create (alf_value_type data, alf_index_type seq)
+entry_create (struct alf_tag_payload_pair data, alf_index_type seq)
 {
   /*
    * The argument seq is permitted to overflow bitsof_seq. In this case,
@@ -114,22 +140,8 @@ entry_create (alf_value_type data, alf_index_type seq)
    * so that entry_get_seq() will return a value not overflowing bitsof_seq.
    */
   _Static_assert(seq_offset + bitsof_seq == bitsof_entry_type, "");
-  return ((alf_entry_type) seq << seq_offset) | (alf_entry_type) data;
-}
-
-static inline
-alf_index_type
-safe_shl (alf_index_type v, int offset)
-{
-  return offset >= 8 * sizeof(alf_index_type) ? 0 : v << offset;
-}
-
-static inline
-alf_index_type
-seq_cast (alf_index_type seq_with_overflow)
-{
-  alf_index_type mask = safe_shl (1, bitsof_seq) - (alf_index_type) 1;
-  return seq_with_overflow & mask;
+  return ((alf_entry_type) seq << seq_offset) |
+    ((alf_entry_type) tag_cast (data.tag) << bitsof_value_type) | (alf_entry_type) data.payload;
 }
 
 static inline
@@ -164,7 +176,7 @@ buffer_get_entry_ptr (struct mpmc_queue * q, alf_index_type i)
 #endif
 
 int
-alf_enqueue (struct mpmc_queue * q, alf_value_type d)
+alf_enqueue (struct mpmc_queue * q, struct alf_tag_payload_pair d)
 {
   alf_index_type wr_index = load_atomic (&q->write_index, memory_order_relaxed);
   while (1)
@@ -180,7 +192,7 @@ alf_enqueue (struct mpmc_queue * q, alf_value_type d)
       return 0;
     case 1u:
       {
-        alf_entry_type e = entry_create (0, wr_seq);
+        alf_entry_type e = entry_create ((struct alf_tag_payload_pair) {0}, wr_seq);
         alf_entry_type data_entry = entry_create (d, wr_seq + 1u);
         if (bool_compare_and_swap_atomic_strong (
           buffer_get_entry_ptr (q, wr_index), &e, data_entry,
@@ -209,7 +221,7 @@ alf_enqueue (struct mpmc_queue * q, alf_value_type d)
 }
 
 int
-alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
+alf_dequeue (struct mpmc_queue * q, struct alf_tag_payload_pair * d)
 {
   alf_index_type rd_index = load_atomic (&q->read_index, memory_order_relaxed);
   while (1)
@@ -224,7 +236,7 @@ alf_dequeue (struct mpmc_queue * q, alf_value_type * d)
       return 0;
     case 1u:
       {
-        alf_entry_type empty_entry = entry_create (0, rd_seq + 2u);
+        alf_entry_type empty_entry = entry_create ((struct alf_tag_payload_pair) {0}, rd_seq + 2u);
         if (bool_compare_and_swap_atomic_strong (
           buffer_get_entry_ptr (q, rd_index), &e, empty_entry,
           memory_order_relaxed, memory_order_relaxed
