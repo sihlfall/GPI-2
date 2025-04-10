@@ -1,6 +1,8 @@
 #ifndef UCX_DEVICE_H_
 #define UCX_DEVICE_H_
 
+#include "mpmc_queue_struct.h"
+
 #include "GASPI.h"
 #include "ucp/api/ucp.h"
 
@@ -10,6 +12,8 @@
 
 #define UCX_DEVICE_MAX_ENDPOINTS 1024
 #define UCX_DEVICE_MAX_RANKS 128
+
+#define UCX_DEV_MSG_CONNECT 1
 
 struct ucx_device;
 
@@ -28,6 +32,7 @@ typedef struct ucx_device {
   ucp_listener_h ucp_listener;
   uint16_t host_port;
   ucp_context_h ucp_ctx;
+  struct mpmc_queue queue;
   struct ucx_device_endpoint endpoints[UCX_DEVICE_MAX_RANKS];
 } ucx_device_t;
 

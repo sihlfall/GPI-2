@@ -270,6 +270,67 @@ err:
   return UCS_OK;
 }
 
+static
+int
+ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port)
+{
+  fprintf (stderr, "Creating endpoint\n");
+
+  ucp_ep_h client_ep;
+  {
+    struct sockaddr_in serv_addr = {
+      .sin_family = AF_INET,
+      .sin_port = htons (port)
+    };
+    if (inet_pton (AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
+      fprintf (stderr, "Invalid address/Address not supported");
+      return 1;
+    };
+    
+    ucs_status_t status = ucp_ep_create (
+      ucx_device->ucp_worker,
+      & (ucp_ep_params_t) {
+        .field_mask = UCP_EP_PARAM_FIELD_FLAGS |
+          UCP_EP_PARAM_FIELD_SOCK_ADDR   |
+          UCP_EP_PARAM_FIELD_ERR_HANDLER |
+          UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE,
+        .err_mode = UCP_ERR_HANDLING_MODE_PEER,
+        .err_handler = {
+          .cb = err_cb,
+          .arg = NULL
+        },
+        .flags = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER,
+        .sockaddr = {
+          .addr = (struct sockaddr *) & serv_addr,
+          .addrlen = sizeof (struct sockaddr_in)
+        }
+      },
+      &client_ep
+    );
+    if (status != UCS_OK)
+    {
+      fprintf(stderr, "Creating client EP failed\n");
+      return 1;
+    }
+  }
+
+  fprintf(stderr, "Client endpoint created\n");
+
+  {
+    ucs_status_ptr_t request = ucp_am_send_nbx (
+      client_ep, UCX_DEV_HUHU, &ucx_device->rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
+        .cb = { .send = send_huhu_complete_callback },
+        .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
+      }
+    );
+    if (UCS_PTR_IS_ERR (request)) {
+      fprintf (stderr, "Client: Error sending AM.\n");
+      return;
+    }
+  }
+}
+
 int
 ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host_port)
 {
@@ -287,8 +348,6 @@ ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host
     ucs_status_t status = ucp_init (
       & (ucp_params_t) {
         .field_mask = UCP_PARAM_FIELD_FEATURES,
-        
-        /* We do need tag matching for send/recv. */
         .features = UCP_FEATURE_AM
       },
       config,
@@ -338,7 +397,8 @@ ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host
     .rank = rank,
     .ucp_ctx = ucp_context,
     .ucp_worker = ucp_worker,
-    .host_port = host_port
+    .host_port = host_port,
+    .queue = (struct mpmc_queue) {0}
   };
 
   return 0;
@@ -360,3 +420,21 @@ ucx_dev_cleanup_device(struct ucx_device * ucx_device)
   ucp_worker_destroy (ucx_device->ucp_worker);
   ucp_cleanup (ucx_device->ucp_ctx);
 }
+
+static
+void
+send_huhu_complete_callback (void *request, ucs_status_t status, void *user_data)
+{
+  ucp_request_free (request);
+}
+
+static
+void
+err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
+{
+  fprintf(stderr,
+    "error handling callback was invoked with status %d (%s)\n",
+    status, ucs_status_string (status)
+  );
+}
+
