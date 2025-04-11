@@ -196,7 +196,7 @@ alf_enqueue (struct mpmc_queue * q, struct alf_tag_payload_pair d)
         alf_entry_type data_entry = entry_create (d, wr_seq + 1u);
         if (bool_compare_and_swap_atomic_strong (
           buffer_get_entry_ptr (q, wr_index), &e, data_entry,
-          memory_order_relaxed, memory_order_relaxed
+          memory_order_release, memory_order_relaxed
         ))
         {
           (void) bool_compare_and_swap_atomic_weak (
@@ -239,7 +239,7 @@ alf_dequeue (struct mpmc_queue * q, struct alf_tag_payload_pair * d)
         alf_entry_type empty_entry = entry_create ((struct alf_tag_payload_pair) {0}, rd_seq + 2u);
         if (bool_compare_and_swap_atomic_strong (
           buffer_get_entry_ptr (q, rd_index), &e, empty_entry,
-          memory_order_relaxed, memory_order_relaxed
+          memory_order_acquire, memory_order_relaxed
         ))
         {
           *d = entry_get_data (e);
