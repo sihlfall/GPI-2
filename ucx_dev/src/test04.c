@@ -52,7 +52,7 @@ run (uint16_t base_port, gaspi_rank_t my_rank)
     goto err_start_device;
   }
 
-  fprintf(stderr, "Server is running in a separate thread. Press any key to stop.\n");
+  fprintf(stderr, "UCX device running. Enter c host rank to connect or q to quit.\n");
 
   enum { max_ips = 10 };
   char ipbuffer [max_ips][64] = {0};
@@ -60,7 +60,6 @@ run (uint16_t base_port, gaspi_rank_t my_rank)
 
   gaspi_rank_t other_rank;
 
-  /* Wait for keypress */
   while (iip < max_ips && get_command_line_input (ipbuffer [iip], &other_rank)) {
     ucx_dev_connect_to (&ucx_device, ipbuffer[iip], base_port + other_rank);
   }

@@ -287,6 +287,32 @@ err:
   return UCS_OK;
 }
 
+static
+ucs_status_t
+am_rehu_callback (
+  void * arg, const void * header, size_t header_length, void * data, size_t length, const ucp_am_recv_param_t * param
+)
+{
+  struct ucx_device * ucx_device = (struct ucx_device *) arg;
+  gaspi_rank_t * rank = (gaspi_rank_t *) header;
+
+  fprintf (stderr, "Received a REHU.\n");
+  fprintf (stderr, "Received rank: %d\n", (int) * rank);
+
+  if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))
+  {
+    fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
+    goto err;
+  }
+  if (register_ep (ucx_device, param->reply_ep, * rank)) {
+    fprintf (stderr, "Could not register endpoint for rank %d\n", * rank);
+    goto err;
+  }
+
+err:
+  return UCS_OK;
+}
+
 static void send_huhu_complete_callback (void *request, ucs_status_t status, void *user_data)
 {
   ucp_request_free (request);
@@ -440,6 +466,21 @@ ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host
       goto err_set_am_recv_handler;
     }
   }
+  {
+    ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker, & (ucp_am_handler_param_t) {
+      .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
+        UCP_AM_HANDLER_PARAM_FIELD_CB | UCP_AM_HANDLER_PARAM_FIELD_ARG,
+      .id = UCX_DEV_REHU,
+      .flags = UCP_AM_FLAG_WHOLE_MSG,
+      .cb = am_rehu_callback,
+      .arg = (void *) ucx_device
+    });
+    if (status != UCS_OK) {
+      GASPI_DEBUG_PRINT_ERROR("setting AM REHU callback failed: %d", status);
+      goto err_set_am_recv_handler;
+    }
+  }
+
 
   * ucx_device = (ucx_device_t) {
     .rank = rank,
