@@ -15,6 +15,11 @@
 
 #define UCX_DEV_MSG_CONNECT 1
 
+struct ucx_device_msg_connect_data {
+  char const * host;
+  uint16_t port;
+};
+
 struct ucx_device;
 
 struct ucx_device_endpoint {
@@ -40,6 +45,7 @@ int ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t 
 int ucx_dev_start_device (ucx_device_t * ucx_device);
 void ucx_dev_stop_device (ucx_device_t * ucx_device);
 void ucx_dev_cleanup_device(ucx_device_t * ucx_device);
+int ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port);
 
 enum ucx_dev_am {
   UCX_DEV_HUHU = 1,

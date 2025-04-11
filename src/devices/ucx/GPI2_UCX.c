@@ -49,9 +49,11 @@ int
 pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
                             const int i)
 {
-  /* gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx; */
+  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
-  NOTIMPLEMENTED()
+  return ucx_dev_connect_to (&ucx_device_ctx->oob_server, /*i,*/ pgaspi_gethostname (i),
+                              gctx->config->dev_config.params.tcp.port + i
+                              /*gctx->poff[i]*/);
 }
 
 int

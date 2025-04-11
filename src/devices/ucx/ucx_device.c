@@ -171,6 +171,8 @@ ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
   }
 }
 
+static int ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port);
+
 static
 void *
 run_ucx_device (void * args)
@@ -184,6 +186,21 @@ run_ucx_device (void * args)
   }
 
   while (!myself->should_stop) {
+    struct alf_tag_payload_pair msg;
+    if (alf_dequeue (&myself->queue, &msg)) {
+      switch (msg.tag) {
+      case UCX_DEV_MSG_CONNECT:
+        {
+          struct ucx_device_msg_connect_data * p = (struct ucx_device_msg_connect_data *) msg.payload;
+          ucx_dev_do_connect_to (myself, p->host, p->port);
+          free (p); /* TO DO: This is pretty bad. */
+        }
+        break;
+      default:
+        break;
+      }
+    }
+
     ucp_worker_progress(myself->ucp_worker);
   }
 
@@ -270,9 +287,24 @@ err:
   return UCS_OK;
 }
 
+static void send_huhu_complete_callback (void *request, ucs_status_t status, void *user_data)
+{
+  ucp_request_free (request);
+}
+
+static
+void
+err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
+{
+  fprintf(stderr,
+    "error handling callback was invoked with status %d (%s)\n",
+    status, ucs_status_string (status)
+  );
+}
+
 static
 int
-ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port)
+ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port)
 {
   fprintf (stderr, "Creating endpoint\n");
 
@@ -326,9 +358,25 @@ ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t po
     );
     if (UCS_PTR_IS_ERR (request)) {
       fprintf (stderr, "Client: Error sending AM.\n");
-      return;
+      return 1;
     }
   }
+
+  return 0;
+}
+
+int
+ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port)
+{
+  struct ucx_device_msg_connect_data * d = calloc (1, sizeof(struct ucx_device_msg_connect_data));
+  *d = (struct ucx_device_msg_connect_data) {
+    .host = hostip4,
+    .port = port
+  };
+  return alf_enqueue (&ucx_device->queue, (struct alf_tag_payload_pair) {
+    .tag = UCX_DEV_MSG_CONNECT,
+    .payload = (alf_payload_type) d
+  });
 }
 
 int
@@ -419,22 +467,5 @@ ucx_dev_cleanup_device(struct ucx_device * ucx_device)
 {
   ucp_worker_destroy (ucx_device->ucp_worker);
   ucp_cleanup (ucx_device->ucp_ctx);
-}
-
-static
-void
-send_huhu_complete_callback (void *request, ucs_status_t status, void *user_data)
-{
-  ucp_request_free (request);
-}
-
-static
-void
-err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
-{
-  fprintf(stderr,
-    "error handling callback was invoked with status %d (%s)\n",
-    status, ucs_status_string (status)
-  );
 }
 

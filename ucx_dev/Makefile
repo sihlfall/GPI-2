@@ -2,7 +2,7 @@ C=gcc
 CC=g++
 CFLAGS=-std=c17 -pthread -Wall -pedantic -DDEBUG=1 -O3 -flto -march=native -mtune=native
 CCFLAGS=-std=c++20 -Wall -pedantic -O3 -flto -march=native -mtune=native
-LINKFLAGS=-pthread -lucp -lucs -flto
+LINKFLAGS=-pthread -lucp -lucs -flto -latomic
 SRC=./src
 SRC_GPI2UCX=../src/devices/ucx
 SRC_STUB=./stub/src
@@ -11,19 +11,19 @@ INC=-I./stub/include -I../src/devices/ucx -I.
 LIBS=/home/cluster/local/lib64/libGPI2.la
 OBJ_NAMES_GPI2UCX=GPI2_UCX_ATOMIC.o GPI2_UCX_GRP.o GPI2_UCX_IO.o \
   GPI2_UCX_PASSIVE.o GPI2_UCX_SEG.o GPI2_UCX.o \
-	ucx_device.o
+	ucx_device.o mpmc_queue.o
 OBJ_NAMES_STUB=GPI2.o GPI2_Utility.o
 
 OBJS_GPI2UCX = $(addprefix $(BIN)/, $(OBJ_NAMES_GPI2UCX))
 OBJS_STUB = $(addprefix $(BIN)/, $(OBJ_NAMES_STUB))
 
-all: $(BIN) $(BIN)/test01 $(BIN)/test02 $(BIN)/test03 $(BIN)/queue_timing
+all: $(BIN) $(BIN)/test01 $(BIN)/test02 $(BIN)/test03 $(BIN)/queue_timing $(BIN)/test04
 
 $(BIN):
 	mkdir -p bin
 
 $(BIN)/queue_timing: $(BIN)/mpmc_queue.o $(BIN)/queue_timing.o $(BIN)/queue_timing_cpp_interop.o
-	$(C) -o $@ $^ $(LINKFLAGS) -lstdc++ -latomic
+	$(C) -o $@ $^ $(LINKFLAGS) -lstdc++
 
 $(BIN)/test01: $(BIN)/test01.o $(OBJS_GPI2UCX) $(OBJS_STUB)
 	$(C) -o $@ $^ $(LINKFLAGS) 
@@ -32,7 +32,10 @@ $(BIN)/test02: $(BIN)/test02.o $(OBJS_GPI2UCX) $(OBJS_STUB)
 	$(C) -o $@ $^ $(LINKFLAGS)
 
 $(BIN)/test03: $(BIN)/test03.o $(BIN)/mpmc_queue.o
-	$(C) -o $@ $^ $(LINKFLAGS) -latomic
+	$(C) -o $@ $^ $(LINKFLAGS)
+
+$(BIN)/test04: $(BIN)/test04.o  $(OBJS_GPI2UCX) $(OBJS_STUB)
+	$(C) -o $@ $^ $(LINKFLAGS)
 
 $(BIN)/queue_timing.o: $(SRC)/queue_timing.cc
 	$(CC) $(CCFLAGS) $< -c -o $@ $(INC)
