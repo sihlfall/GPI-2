@@ -27,10 +27,23 @@ struct ucx_device_msg_connect_data {
 
 struct ucx_device;
 
+enum ucx_device_endpoint_status {
+  ucx_device_endpoint_not_connected = 0,
+  ucx_device_endpoint_ok = 1,
+  ucx_device_endpoint_connecting = 2
+};
+
 struct ucx_device_endpoint {
   struct ucx_device * ucx_device;
+  enum ucx_device_endpoint_status status;
   gaspi_rank_t rank;
   ucp_ep_h ep;
+};
+
+struct ucx_device_endpoints {
+  struct ucx_device * ucx_device;
+  int tnc;
+  struct ucx_device_endpoint ary[];
 };
 
 struct ucx_device {
@@ -43,7 +56,7 @@ struct ucx_device {
   uint16_t host_port;
   ucp_context_h ucp_ctx;
   struct mpmc_queue queue;
-  struct ucx_device_endpoint endpoints[UCX_DEVICE_MAX_RANKS];
+  struct ucx_device_endpoints * endpoints;
 };
 
 ucx_device_status_t ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port);

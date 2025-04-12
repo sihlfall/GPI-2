@@ -21,6 +21,10 @@
     }                                         \
   } while (0);                 
 
+/* container_of macro that is used in the Linux kernel */
+#define container_of(ptr, type, member) \
+  ((type *)((char *)(ptr) - offsetof(type, member)))
+
 /*
  * Function naming scheme:
  * Running on user thread:
@@ -33,10 +37,42 @@
  */
 
 /* 
- * **************************************************************************************
+ * ************************************************************************************
  * Endpoints
- * **************************************************************************************
+ * ************************************************************************************
  */
+
+static
+struct ucx_device_endpoints *
+ep_registry_create (struct ucx_device * ucx_device, int tnc)
+{
+  /* We must not assume that *ucx_device has been fully initialized. */
+  struct ucx_device_endpoints * reg = calloc (
+    1,
+    sizeof (struct ucx_device_endpoints) + tnc * sizeof (struct ucx_device_endpoint)
+  );
+  if (!reg) return NULL;
+  reg->ucx_device = ucx_device;
+  reg->tnc = tnc;
+  return reg;
+}
+
+static
+void
+ep_registry_destroy (struct ucx_device_endpoints * reg)
+{
+  /* TODO: Close all endpoints !? */
+  free (reg);
+}
+
+static inline
+struct ucx_device *
+get_ucx_device_for_endpoint (struct ucx_device_endpoint * endpoint_entry)
+{
+  return container_of(
+    endpoint_entry, struct ucx_device_endpoints, ary[endpoint_entry->rank]
+  )->ucx_device;
+}
 
 static
 void
@@ -64,25 +100,28 @@ cb_ep_error (void * args, ucp_ep_h ep, ucs_status_t status)
 static
 ucx_device_status_t
 do_register_ep (struct ucx_device * ucx_device, ucp_ep_h ep, gaspi_rank_t rank) {
-  if (rank >= UCX_DEVICE_MAX_RANKS)
+  if (rank >= ucx_device->endpoints->tnc)
   {
     fprintf (stderr, "Invalid rank value");
     /* TODO: Send error */
     goto err;
   }
-
-  struct ucx_device_endpoint * endpoint_entry = &ucx_device->endpoints[rank];
-  if (endpoint_entry->ucx_device)
+  
+  struct ucx_device_endpoint * endpoint_entry = &ucx_device->endpoints->ary[rank];
+  if (endpoint_entry->status == ucx_device_endpoint_ok)
   {
     fprintf (stderr, "An endpoint has already been assigned to rank %d\n", (int) rank);
+    (void) ucp_ep_close_nb (ep, UCP_EP_CLOSE_MODE_FORCE);
     goto err;
   }
   *endpoint_entry = (struct ucx_device_endpoint) {
     .ucx_device = ucx_device,
+    .status = ucx_device_endpoint_ok,
     .rank = rank,
     .ep = ep
   };
 
+  /* TODO: Handle error! */
   ucp_ep_modify_nb (ep, & (ucp_ep_params_t) {
     .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER | UCP_EP_PARAM_FIELD_USER_DATA,
     .err_handler = {
@@ -211,10 +250,11 @@ cb_just_free_request (void * request, ucs_status_t status, void * user_data)
 
 static
 void
-do_send_rehu (ucp_ep_h ep, gaspi_rank_t * rank)
+do_send_hu (ucp_ep_h ep, enum ucx_dev_am msg_type, gaspi_rank_t * our_rank)
 {
   ucs_status_ptr_t request = ucp_am_send_nbx (
-    ep, UCX_DEV_REHU, rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+    ep, msg_type, our_rank, sizeof(gaspi_rank_t), NULL, 0,
+    & (ucp_request_param_t) {
       .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
       .cb = { .send = cb_just_free_request },
       .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
@@ -222,7 +262,7 @@ do_send_rehu (ucp_ep_h ep, gaspi_rank_t * rank)
   );
   if (UCS_PTR_IS_ERR (request))
   {
-    fprintf (stderr, "Server: Error sending REHU AM.\n");
+    fprintf (stderr, "Client: Error sending AM (type: %d).\n", msg_type);
     return;
   }
 }
@@ -251,7 +291,7 @@ on_am_huhu (
     goto err;
   }
 
-  do_send_rehu (param->reply_ep, &ucx_device->rank);
+  do_send_hu (param->reply_ep, UCX_DEV_REHU, &ucx_device->rank);
 
 err:
   return UCS_OK;
@@ -268,20 +308,20 @@ on_am_rehu (
   gaspi_rank_t * rank = (gaspi_rank_t *) header;
 
   fprintf (stderr, "Received a REHU.\n");
-  fprintf (stderr, "Received rank: %d\n", (int) * rank);
+  fprintf (stderr, "Received rank: %d\n", (int) *rank);
 
   if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))
   {
     fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
     goto err;
   }
-  if (do_register_ep (ucx_device, param->reply_ep, * rank) != UCX_DEVICE_OK)
+  if (do_register_ep (ucx_device, param->reply_ep, *rank) != UCX_DEVICE_OK)
   {
-    fprintf (stderr, "Could not register endpoint for rank %d\n", * rank);
+    fprintf (stderr, "Could not register endpoint for rank %d\n", *rank);
     goto err;
   }
 
-err:
+err: /* Ignore errors TODO: acceptable? */
   return UCS_OK;
 }
 
@@ -334,21 +374,7 @@ do_connect_to (
 
   fprintf(stderr, "Client endpoint created\n");
 
-  {
-    ucs_status_ptr_t request = ucp_am_send_nbx (
-      client_ep, UCX_DEV_HUHU, &ucx_device->rank, sizeof(gaspi_rank_t), NULL, 0,
-      & (ucp_request_param_t) {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
-        .cb = { .send = cb_just_free_request },
-        .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
-      }
-    );
-    if (UCS_PTR_IS_ERR (request))
-    {
-      fprintf (stderr, "Client: Error sending AM.\n");
-      return 1;
-    }
-  }
+  do_send_hu (client_ep, UCX_DEV_HUHU, &ucx_device->rank);
 
   return 0;
 }
@@ -535,16 +561,29 @@ ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t hos
     }
   }
 
+  struct ucx_device_endpoints * ep_registry;
+  {
+    /* To do: Change MAX_ENDPOINTS to tnc! */
+    ep_registry = ep_registry_create (ucx_device, UCX_DEVICE_MAX_ENDPOINTS);
+    if (!ep_registry)
+    {
+      GASPI_DEBUG_PRINT_ERROR("could not allocate memory for ep registry");
+      goto err_ep_registry_create;
+    }
+  }
+
   *ucx_device = (struct ucx_device) {
     .rank = rank,
     .ucp_ctx = ucp_context,
     .ucp_worker = ucp_worker,
     .host_port = host_port,
-    .queue = (struct mpmc_queue) {0}
+    .queue = (struct mpmc_queue) {0},
+    .endpoints = ep_registry
   };
 
   return UCX_DEVICE_OK;
 
+err_ep_registry_create:
 err_set_am_recv_handler:
   ucp_worker_destroy (ucp_worker);
 
@@ -559,6 +598,7 @@ err_config_read:
 void
 ucx_device_cleanup (struct ucx_device * ucx_device)
 {
+  ep_registry_destroy (ucx_device->endpoints);
   ucp_worker_destroy (ucx_device->ucp_worker);
   ucp_cleanup (ucx_device->ucp_ctx);
 }
