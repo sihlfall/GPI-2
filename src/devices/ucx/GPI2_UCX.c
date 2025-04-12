@@ -51,7 +51,7 @@ pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
 {
   gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
-  return ucx_dev_connect_to (&ucx_device_ctx->oob_server, /*i,*/ pgaspi_gethostname (i),
+  return ucx_device_connect_to (&ucx_device_ctx->oob_server, /*i,*/ pgaspi_gethostname (i),
                               gctx->config->dev_config.params.tcp.port + i
                               /*gctx->poff[i]*/);
 }
@@ -108,7 +108,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
   ucx_dev_ctx->eps = calloc(gctx->tnc, sizeof (ucp_ep_h));
 
-  if ( ucx_dev_init_device (&ucx_dev_ctx->oob_server, gctx->rank, gctx->config->dev_config.params.tcp.port) != 0)
+  if ( ucx_device_init (&ucx_dev_ctx->oob_server, gctx->rank, gctx->config->dev_config.params.tcp.port) != 0)
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
     return -1;
@@ -132,7 +132,7 @@ pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
       ucp_ep_close_nb (ucx_dev_ctx->eps[i], UCP_EP_CLOSE_MODE_FORCE);
     }
   }
-  ucx_dev_cleanup_device (&ucx_dev_ctx->oob_server);
+  ucx_device_cleanup (&ucx_dev_ctx->oob_server);
   free (ucx_dev_ctx->eps);
   free (gctx->device->ctx);
   gctx->device->ctx = NULL;

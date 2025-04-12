@@ -39,14 +39,14 @@ run (uint16_t base_port, gaspi_rank_t my_rank)
 {
   int ret = 0;
 
-  ucx_device_t ucx_device;
-  if (ucx_dev_init_device (&ucx_device, my_rank, base_port + my_rank)) {
+  struct ucx_device ucx_device;
+  if (ucx_device_init (&ucx_device, my_rank, base_port + my_rank) != UCX_DEVICE_OK) {
     fprintf (stderr, "Could not create ucx_device\n");
     ret = 1;
     goto err_init_device;
   }
 
-  if (ucx_dev_start_device (&ucx_device)) {
+  if (ucx_device_start (&ucx_device) != UCX_DEVICE_OK) {
     fprintf (stderr, "Could not start thread.\n");
     ret = 1;
     goto err_start_device;
@@ -61,15 +61,15 @@ run (uint16_t base_port, gaspi_rank_t my_rank)
   gaspi_rank_t other_rank;
 
   while (iip < max_ips && get_command_line_input (ipbuffer [iip], &other_rank)) {
-    ucx_dev_connect_to (&ucx_device, ipbuffer[iip], base_port + other_rank);
+    ucx_device_connect_to (&ucx_device, ipbuffer[iip], base_port + other_rank);
   }
 
   fprintf (stderr, "Stopping ucx device thread ...\n");
-  ucx_dev_stop_device (&ucx_device);
+  ucx_device_stop (&ucx_device);
 
 err_start_device:
   fprintf (stderr, "Cleanup ...\n");
-  ucx_dev_cleanup_device (&ucx_device);
+  ucx_device_cleanup (&ucx_device);
   fprintf (stderr, "Server stopped.\n");
 
 err_init_device:

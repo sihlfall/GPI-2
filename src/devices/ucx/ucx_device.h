@@ -15,6 +15,11 @@
 
 #define UCX_DEV_MSG_CONNECT 1
 
+#define UCX_DEVICE_OK 0
+#define UCX_DEVICE_ERR_UNSPECIFIED (-1)
+
+typedef int ucx_device_status_t;
+
 struct ucx_device_msg_connect_data {
   char const * host;
   uint16_t port;
@@ -28,7 +33,7 @@ struct ucx_device_endpoint {
   ucp_ep_h ep;
 };
 
-typedef struct ucx_device {
+struct ucx_device {
   gaspi_rank_t rank;
   atomic_int should_stop;
   atomic_int is_running;
@@ -39,13 +44,13 @@ typedef struct ucx_device {
   ucp_context_h ucp_ctx;
   struct mpmc_queue queue;
   struct ucx_device_endpoint endpoints[UCX_DEVICE_MAX_RANKS];
-} ucx_device_t;
+};
 
-int ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host_port);
-int ucx_dev_start_device (ucx_device_t * ucx_device);
-void ucx_dev_stop_device (ucx_device_t * ucx_device);
-void ucx_dev_cleanup_device(ucx_device_t * ucx_device);
-int ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port);
+ucx_device_status_t ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port);
+ucx_device_status_t ucx_device_start (struct ucx_device * ucx_device);
+void ucx_device_stop (struct ucx_device * ucx_device);
+void ucx_device_cleanup (struct ucx_device * ucx_device);
+ucx_device_status_t ucx_device_connect_to (struct ucx_device * ucx_device, char const * hostip4, uint16_t port);
 
 enum ucx_dev_am {
   UCX_DEV_HUHU = 1,

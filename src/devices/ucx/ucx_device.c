@@ -5,7 +5,6 @@
 #include "GPI2.h"
 #include "GPI2_Utility.h"
 
-#include <string.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -22,37 +21,49 @@
     }                                         \
   } while (0);                 
 
+/*
+ * Function naming scheme:
+ * Running on user thread:
+ *   ucx_device_...: interface functions (= functions declared in .h file)
+ *   no prefix: static functions
+ * Running on worker thread:
+ *   on_am_...: active message handlers (callbacks)
+ *   cb_...: other callbacks
+ *   do_...: other static functions
+ */
+
+/* 
+ * **************************************************************************************
+ * Endpoints
+ * **************************************************************************************
+ */
 
 static
 void
-ep_error_callback (void * args, ucp_ep_h ep, ucs_status_t status)
+cb_ep_error (void * args, ucp_ep_h ep, ucs_status_t status)
 {
   struct ucx_device_endpoint * endpoint_entry = (struct ucx_device_endpoint *) args;
 
-  switch (status) {
-    case UCS_ERR_CONNECTION_RESET:
-      {
-        if (endpoint_entry)
-        {
-          * endpoint_entry = (struct ucx_device_endpoint) {0};
-        }
-
-        fprintf (stderr, "Server: Closing endpoint ...\n");
-        (void) ucp_ep_close_nb (ep, UCP_EP_CLOSE_MODE_FORCE);
-        fprintf (stderr, "Endpoint closed.\n");
-      } break;
-    default:
-      {
-        fprintf (
-          stderr, "error handling callback was invoked with status %d (%s)\n", status, ucs_status_string (status)
-        );
-      }
-    }
+  switch (status)
+  {
+  case UCS_ERR_CONNECTION_RESET:    
+    if (endpoint_entry) *endpoint_entry = (struct ucx_device_endpoint) {0};
+    fprintf (stderr, "Server: Closing endpoint ...\n");
+    (void) ucp_ep_close_nb (ep, UCP_EP_CLOSE_MODE_FORCE);
+    fprintf (stderr, "Endpoint closed.\n");
+    break;
+  default:
+    fprintf (
+      stderr, "error handling callback was invoked with status %d (%s)\n",
+      status, ucs_status_string (status)
+    );
+    break;
+  }
 }
 
 static
-int
-register_ep (struct ucx_device * ucx_device, ucp_ep_h ep, gaspi_rank_t rank) {
+ucx_device_status_t
+do_register_ep (struct ucx_device * ucx_device, ucp_ep_h ep, gaspi_rank_t rank) {
   if (rank >= UCX_DEVICE_MAX_RANKS)
   {
     fprintf (stderr, "Invalid rank value");
@@ -61,11 +72,12 @@ register_ep (struct ucx_device * ucx_device, ucp_ep_h ep, gaspi_rank_t rank) {
   }
 
   struct ucx_device_endpoint * endpoint_entry = &ucx_device->endpoints[rank];
-  if (endpoint_entry->ucx_device) {
+  if (endpoint_entry->ucx_device)
+  {
     fprintf (stderr, "An endpoint has already been assigned to rank %d\n", (int) rank);
     goto err;
   }
-  * endpoint_entry = (struct ucx_device_endpoint) {
+  *endpoint_entry = (struct ucx_device_endpoint) {
     .ucx_device = ucx_device,
     .rank = rank,
     .ep = ep
@@ -74,23 +86,29 @@ register_ep (struct ucx_device * ucx_device, ucp_ep_h ep, gaspi_rank_t rank) {
   ucp_ep_modify_nb (ep, & (ucp_ep_params_t) {
     .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER | UCP_EP_PARAM_FIELD_USER_DATA,
     .err_handler = {
-      .cb = ep_error_callback,
+      .cb = cb_ep_error,
       .arg = (void *) endpoint_entry
     },
     .user_data = (void *) endpoint_entry
   });
 
-  return 0;
+  return UCX_DEVICE_OK;
 
 err:
-  return 1;
+  return UCX_DEVICE_ERR_UNSPECIFIED;
 }
+
+/* 
+ * **************************************************************************************
+ * Connection listener
+ * **************************************************************************************
+ */
 
 static
 void
-handle_connection_callback (ucp_conn_request_h conn_request, void * arg)
+cb_listener_handle_connection (ucp_conn_request_h conn_request, void * arg)
 {
-  ucx_device_t * ucx_device = (ucx_device_t *) arg;
+  struct ucx_device * ucx_device = (struct ucx_device *) arg;
 
   fprintf (stderr, "Connection handler called\n");
 
@@ -102,13 +120,14 @@ handle_connection_callback (ucp_conn_request_h conn_request, void * arg)
         UCP_EP_PARAM_FIELD_CONN_REQUEST,
       .conn_request = conn_request,
       .err_handler = {
-        .cb = ep_error_callback,
+        .cb = cb_ep_error,
         .arg = NULL
       }
     },
     &new_endpoint
   );
-  if (status != UCS_OK) {
+  if (status != UCS_OK)
+  {
     fprintf(stderr, "failed to create an endpoint on the server: (%s)\n",
             ucs_status_string(status));
     goto err_ep_create;
@@ -124,7 +143,7 @@ err_ep_create:
 
 static
 int
-ucx_dev_create_listener (ucx_device_t * ucx_device)
+do_create_listener (struct ucx_device * ucx_device)
 {
   ucp_listener_h ucp_listener;
   {
@@ -142,7 +161,7 @@ ucx_dev_create_listener (ucx_device_t * ucx_device)
           .addrlen = sizeof (struct sockaddr_in)
         },
         .conn_handler = (ucp_listener_conn_handler_t) {
-          .cb = handle_connection_callback,
+          .cb = cb_listener_handle_connection,
           .arg = ucx_device
         }
       },
@@ -162,7 +181,7 @@ ucx_dev_create_listener (ucx_device_t * ucx_device)
 
 static
 void
-ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
+do_cleanup_listener (struct ucx_device * ucp_device)
 {
   if (ucp_device->ucp_listener)
   {
@@ -171,98 +190,48 @@ ucx_dev_cleanup_listener (ucx_device_t * ucp_device)
   }
 }
 
-static int ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port);
-
-static
-void *
-run_ucx_device (void * args)
-{
-  struct ucx_device * myself = (struct ucx_device *) args;
-
-  if (ucx_dev_create_listener (myself))
-  {
-    fprintf (stderr, "Creating listener failed\n");
-    goto err;
-  }
-
-  while (!myself->should_stop) {
-    struct alf_tag_payload_pair msg;
-    if (alf_dequeue (&myself->queue, &msg)) {
-      switch (msg.tag) {
-      case UCX_DEV_MSG_CONNECT:
-        {
-          struct ucx_device_msg_connect_data * p = (struct ucx_device_msg_connect_data *) msg.payload;
-          ucx_dev_do_connect_to (myself, p->host, p->port);
-          free (p); /* TO DO: This is pretty bad. */
-        }
-        break;
-      default:
-        break;
-      }
-    }
-
-    ucp_worker_progress(myself->ucp_worker);
-  }
-
-  ucx_dev_cleanup_listener (myself);
-
-err:
-  /* TODO: Different return code in case of error. */
-  pthread_exit (NULL);
-}
-
-int
-ucx_dev_start_device (ucx_device_t * ucx_device)
-{
-  ucx_device->should_stop = 0;
-  if (pthread_create (&ucx_device->server_tid, NULL, run_ucx_device, ucx_device)) {
-    perror ("Failed to create server thread");
-    return 1;
-  }
-
-  return 0;
-}
-
-void
-ucx_dev_stop_device (ucx_device_t * ucx_device)
-{
-  ucx_device->should_stop = 1;
-  (void) pthread_join (ucx_device->server_tid, NULL);
-}
-
+/* 
+ * **************************************************************************************
+ * Universal callback functions
+ * **************************************************************************************
+ */
 
 static
 void
-send_rehu_complete_callback (void * request, ucs_status_t status, void * user_data)
+cb_just_free_request (void * request, ucs_status_t status, void * user_data)
 {
   ucp_request_free (request);
 }
 
+/* 
+ * **************************************************************************************
+ * Connection handshake (huhu/rehu)
+ * **************************************************************************************
+ */
+
 static
 void
-send_rehu (ucp_ep_h ep, gaspi_rank_t * rank)
+do_send_rehu (ucp_ep_h ep, gaspi_rank_t * rank)
 {
   ucs_status_ptr_t request = ucp_am_send_nbx (
     ep, UCX_DEV_REHU, rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
       .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
-      .cb = { .send = send_rehu_complete_callback },
+      .cb = { .send = cb_just_free_request },
       .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
     }
   );
-  if (UCS_PTR_IS_ERR (request)) {
+  if (UCS_PTR_IS_ERR (request))
+  {
     fprintf (stderr, "Server: Error sending REHU AM.\n");
     return;
-  }
-  else if (request)
-  {
-    ucp_request_free (request);
   }
 }
 
 static
 ucs_status_t
-am_huhu_callback (
-  void * arg, const void * header, size_t header_length, void * data, size_t length, const ucp_am_recv_param_t * param
+on_am_huhu (
+  void * arg, const void * header, size_t header_length, void * data, size_t length,
+  const ucp_am_recv_param_t * param
 )
 {
   struct ucx_device * ucx_device = (struct ucx_device *) arg;
@@ -276,12 +245,13 @@ am_huhu_callback (
     fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
     goto err;
   }
-  if (register_ep (ucx_device, param->reply_ep, * rank)) {
+  if (do_register_ep (ucx_device, param->reply_ep, * rank) != UCX_DEVICE_OK)
+  {
     fprintf (stderr, "Could not register endpoint for rank %d\n", * rank);
     goto err;
   }
 
-  send_rehu (param->reply_ep, &ucx_device->rank);
+  do_send_rehu (param->reply_ep, &ucx_device->rank);
 
 err:
   return UCS_OK;
@@ -289,8 +259,9 @@ err:
 
 static
 ucs_status_t
-am_rehu_callback (
-  void * arg, const void * header, size_t header_length, void * data, size_t length, const ucp_am_recv_param_t * param
+on_am_rehu (
+  void * arg, const void * header, size_t header_length, void * data, size_t length,
+  const ucp_am_recv_param_t * param
 )
 {
   struct ucx_device * ucx_device = (struct ucx_device *) arg;
@@ -304,7 +275,8 @@ am_rehu_callback (
     fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
     goto err;
   }
-  if (register_ep (ucx_device, param->reply_ep, * rank)) {
+  if (do_register_ep (ucx_device, param->reply_ep, * rank) != UCX_DEVICE_OK)
+  {
     fprintf (stderr, "Could not register endpoint for rank %d\n", * rank);
     goto err;
   }
@@ -313,24 +285,11 @@ err:
   return UCS_OK;
 }
 
-static void send_huhu_complete_callback (void *request, ucs_status_t status, void *user_data)
-{
-  ucp_request_free (request);
-}
-
-static
-void
-err_cb (void *arg, ucp_ep_h ep, ucs_status_t status)
-{
-  fprintf(stderr,
-    "error handling callback was invoked with status %d (%s)\n",
-    status, ucs_status_string (status)
-  );
-}
-
 static
 int
-ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port)
+do_connect_to (
+  struct ucx_device * ucx_device, char const * hostip4, uint16_t port
+)
 {
   fprintf (stderr, "Creating endpoint\n");
 
@@ -340,7 +299,8 @@ ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t
       .sin_family = AF_INET,
       .sin_port = htons (port)
     };
-    if (inet_pton (AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
+    if (inet_pton (AF_INET, hostip4, &serv_addr.sin_addr) < 0)
+    {
       fprintf (stderr, "Invalid address/Address not supported");
       return 1;
     };
@@ -354,7 +314,7 @@ ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t
           UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE,
         .err_mode = UCP_ERR_HANDLING_MODE_PEER,
         .err_handler = {
-          .cb = err_cb,
+          .cb = cb_ep_error,
           .arg = NULL
         },
         .flags = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER,
@@ -376,13 +336,15 @@ ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t
 
   {
     ucs_status_ptr_t request = ucp_am_send_nbx (
-      client_ep, UCX_DEV_HUHU, &ucx_device->rank, sizeof(gaspi_rank_t), NULL, 0, & (ucp_request_param_t) {
+      client_ep, UCX_DEV_HUHU, &ucx_device->rank, sizeof(gaspi_rank_t), NULL, 0,
+      & (ucp_request_param_t) {
         .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
-        .cb = { .send = send_huhu_complete_callback },
+        .cb = { .send = cb_just_free_request },
         .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
       }
     );
-    if (UCS_PTR_IS_ERR (request)) {
+    if (UCS_PTR_IS_ERR (request))
+    {
       fprintf (stderr, "Client: Error sending AM.\n");
       return 1;
     }
@@ -391,10 +353,13 @@ ucx_dev_do_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t
   return 0;
 }
 
-int
-ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t port)
+ucx_device_status_t
+ucx_device_connect_to (
+  struct ucx_device * ucx_device, char const * hostip4, uint16_t port
+)
 {
-  struct ucx_device_msg_connect_data * d = calloc (1, sizeof(struct ucx_device_msg_connect_data));
+  struct ucx_device_msg_connect_data * d =
+    calloc (1, sizeof (struct ucx_device_msg_connect_data));
   *d = (struct ucx_device_msg_connect_data) {
     .host = hostip4,
     .port = port
@@ -402,16 +367,97 @@ ucx_dev_connect_to (ucx_device_t * ucx_device, char const * hostip4, uint16_t po
   return alf_enqueue (&ucx_device->queue, (struct alf_tag_payload_pair) {
     .tag = UCX_DEV_MSG_CONNECT,
     .payload = (alf_payload_type) d
-  });
+  }) ? UCX_DEVICE_ERR_UNSPECIFIED : UCX_DEVICE_OK;
 }
 
-int
-ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host_port)
+/* 
+ * **************************************************************************************
+ * Run (worker thread main function, incl. message loop)
+ * **************************************************************************************
+ */
+
+static
+void *
+do_run (void * args)
+{
+  struct ucx_device * myself = (struct ucx_device *) args;
+
+  if (do_create_listener (myself))
+  {
+    fprintf (stderr, "Creating listener failed\n");
+    goto err;
+  }
+
+  while (!myself->should_stop)
+  {
+    struct alf_tag_payload_pair msg;
+    if (alf_dequeue (&myself->queue, &msg))
+    {
+      switch (msg.tag)
+      {
+      case UCX_DEV_MSG_CONNECT:
+        {
+          struct ucx_device_msg_connect_data * p =
+            (struct ucx_device_msg_connect_data *) msg.payload;
+          do_connect_to (myself, p->host, p->port);
+          free (p); /* TO DO: This is pretty bad. */
+        }
+        break;
+      default:
+        break;
+      }
+    }
+
+    ucp_worker_progress(myself->ucp_worker);
+  }
+
+  do_cleanup_listener (myself);
+
+err:
+  /* TODO: Different return code in case of error. */
+  pthread_exit (NULL);
+}
+ 
+/* 
+ * **************************************************************************************
+ * Start device, stop device
+ * **************************************************************************************
+ */
+
+ucx_device_status_t
+ucx_device_start (struct ucx_device * ucx_device)
+{
+  ucx_device->should_stop = 0;
+  if (pthread_create (&ucx_device->server_tid, NULL, do_run, ucx_device))
+  {
+    perror ("Failed to create server thread");
+    return 1;
+  }
+
+  return 0;
+}
+
+void
+ucx_device_stop (struct ucx_device * ucx_device)
+{
+  ucx_device->should_stop = 1;
+  (void) pthread_join (ucx_device->server_tid, NULL);
+} 
+
+/* 
+ * **************************************************************************************
+ * Init device, cleanup device
+ * **************************************************************************************
+ */
+
+ucx_device_status_t
+ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port)
 {
   ucp_config_t * config = NULL;
   {
     ucs_status_t status = ucp_config_read("GPI2", NULL, &config);
-    if (status != UCS_OK) {
+    if (status != UCS_OK)
+    {
       GASPI_DEBUG_PRINT_ERROR("ucp_config_read failed: %d", status);
       goto err_config_read;
     }
@@ -427,7 +473,8 @@ ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host
       config,
       &ucp_context
     );
-    if (status != UCS_OK) {
+    if (status != UCS_OK)
+    {
       GASPI_DEBUG_PRINT_ERROR("ucp_init failed: %d", status);
       ucp_config_release(config);
       goto err_init;
@@ -446,43 +493,49 @@ ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host
       },
       &ucp_worker
     );
-    if (status != UCS_OK) {
+    if (status != UCS_OK)
+    {
       GASPI_DEBUG_PRINT_ERROR("ucp_worker_create failed: %d", status);
       goto err_worker_create;
     }
   }
   
   {
-    ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker, & (ucp_am_handler_param_t) {
-      .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
-        UCP_AM_HANDLER_PARAM_FIELD_CB | UCP_AM_HANDLER_PARAM_FIELD_ARG,
-      .id = UCX_DEV_HUHU,
-      .flags = UCP_AM_FLAG_WHOLE_MSG,
-      .cb = am_huhu_callback,
-      .arg = (void *) ucx_device
-    });
-    if (status != UCS_OK) {
+    ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker,
+      & (ucp_am_handler_param_t) {
+        .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
+          UCP_AM_HANDLER_PARAM_FIELD_CB | UCP_AM_HANDLER_PARAM_FIELD_ARG,
+        .id = UCX_DEV_HUHU,
+        .flags = UCP_AM_FLAG_WHOLE_MSG,
+        .cb = on_am_huhu,
+        .arg = (void *) ucx_device
+      }
+    );
+    if (status != UCS_OK)
+    {
       GASPI_DEBUG_PRINT_ERROR("setting AM HUHU callback failed: %d", status);
       goto err_set_am_recv_handler;
     }
   }
   {
-    ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker, & (ucp_am_handler_param_t) {
-      .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
-        UCP_AM_HANDLER_PARAM_FIELD_CB | UCP_AM_HANDLER_PARAM_FIELD_ARG,
-      .id = UCX_DEV_REHU,
-      .flags = UCP_AM_FLAG_WHOLE_MSG,
-      .cb = am_rehu_callback,
-      .arg = (void *) ucx_device
-    });
-    if (status != UCS_OK) {
+    ucs_status_t status = ucp_worker_set_am_recv_handler (ucp_worker,
+      & (ucp_am_handler_param_t) {
+        .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID | UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
+          UCP_AM_HANDLER_PARAM_FIELD_CB | UCP_AM_HANDLER_PARAM_FIELD_ARG,
+        .id = UCX_DEV_REHU,
+        .flags = UCP_AM_FLAG_WHOLE_MSG,
+        .cb = on_am_rehu,
+        .arg = (void *) ucx_device
+      }
+    );
+    if (status != UCS_OK)
+    {
       GASPI_DEBUG_PRINT_ERROR("setting AM REHU callback failed: %d", status);
       goto err_set_am_recv_handler;
     }
   }
 
-
-  * ucx_device = (ucx_device_t) {
+  *ucx_device = (struct ucx_device) {
     .rank = rank,
     .ucp_ctx = ucp_context,
     .ucp_worker = ucp_worker,
@@ -490,7 +543,7 @@ ucx_dev_init_device (ucx_device_t * ucx_device, gaspi_rank_t rank, uint16_t host
     .queue = (struct mpmc_queue) {0}
   };
 
-  return 0;
+  return UCX_DEVICE_OK;
 
 err_set_am_recv_handler:
   ucp_worker_destroy (ucp_worker);
@@ -500,11 +553,11 @@ err_worker_create:
 
 err_init:
 err_config_read:
-  return -1;
+  return UCX_DEVICE_ERR_UNSPECIFIED;
 }
 
 void
-ucx_dev_cleanup_device(struct ucx_device * ucx_device)
+ucx_device_cleanup (struct ucx_device * ucx_device)
 {
   ucp_worker_destroy (ucx_device->ucp_worker);
   ucp_cleanup (ucx_device->ucp_ctx);
