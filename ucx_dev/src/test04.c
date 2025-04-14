@@ -61,7 +61,7 @@ run (uint16_t base_port, gaspi_rank_t my_rank)
   gaspi_rank_t other_rank;
 
   while (iip < max_ips && get_command_line_input (ipbuffer [iip], &other_rank)) {
-    ucx_device_connect_to (&ucx_device, ipbuffer[iip], base_port + other_rank);
+    ucx_device_connect_to (&ucx_device, ipbuffer[iip], base_port + other_rank, other_rank);
   }
 
   fprintf (stderr, "Stopping ucx device thread ...\n");

@@ -52,7 +52,7 @@ pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
   gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
   return ucx_device_connect_to (&ucx_device_ctx->oob_server, /*i,*/ pgaspi_gethostname (i),
-                              gctx->config->dev_config.params.tcp.port + i
+                              gctx->config->dev_config.params.tcp.port + i, i
                               /*gctx->poff[i]*/);
 }
 

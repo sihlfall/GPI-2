@@ -23,6 +23,7 @@ typedef int ucx_device_status_t;
 struct ucx_device_msg_connect_data {
   char const * host;
   uint16_t port;
+  gaspi_rank_t peer_rank;
 };
 
 struct ucx_device;
@@ -33,17 +34,16 @@ enum ucx_device_endpoint_status {
   ucx_device_endpoint_connecting = 2
 };
 
-struct ucx_device_endpoint {
-  struct ucx_device * ucx_device;
+struct ucx_device_ep_entry {
   enum ucx_device_endpoint_status status;
-  gaspi_rank_t rank;
   ucp_ep_h ep;
+  void * ep_instance;
 };
 
 struct ucx_device_endpoints {
   struct ucx_device * ucx_device;
   int tnc;
-  struct ucx_device_endpoint ary[];
+  struct ucx_device_ep_entry ary[];
 };
 
 struct ucx_device {
@@ -59,11 +59,16 @@ struct ucx_device {
   struct ucx_device_endpoints * endpoints;
 };
 
-ucx_device_status_t ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port);
+ucx_device_status_t ucx_device_init (
+  struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port
+);
 ucx_device_status_t ucx_device_start (struct ucx_device * ucx_device);
 void ucx_device_stop (struct ucx_device * ucx_device);
 void ucx_device_cleanup (struct ucx_device * ucx_device);
-ucx_device_status_t ucx_device_connect_to (struct ucx_device * ucx_device, char const * hostip4, uint16_t port);
+ucx_device_status_t ucx_device_connect_to (
+  struct ucx_device * ucx_device, char const * hostip4, uint16_t port,
+  gaspi_rank_t peer_rank
+);
 
 enum ucx_dev_am {
   UCX_DEV_HUHU = 1,
