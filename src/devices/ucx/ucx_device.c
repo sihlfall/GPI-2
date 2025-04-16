@@ -114,7 +114,7 @@ ep_registry_destroy (struct ucx_device_endpoints * reg)
 
 static
 void
-do_unregister_ep (struct ep_instance * ep_instance)
+do_unregister_ep_on_error (struct ep_instance * ep_instance)
 {
   if (!ep_instance->have_rank) return;
   struct ucx_device * ucx_device = ep_instance->ucx_device;
@@ -135,7 +135,7 @@ cb_ep_error (void * args, ucp_ep_h ep, ucs_status_t status)
   {
   case UCS_ERR_CONNECTION_RESET:
     fprintf (stderr, "Server: Closing endpoint ...\n");
-    do_unregister_ep (ep_instance);
+    do_unregister_ep_on_error (ep_instance);
     do_ep_instance_close (ep_instance, UCP_EP_CLOSE_MODE_FORCE);
     fprintf (stderr, "Endpoint closed.\n");
     break;
@@ -146,75 +146,6 @@ cb_ep_error (void * args, ucp_ep_h ep, ucs_status_t status)
     );
     break;
   }
-}
-
-static
-ucx_device_status_t
-do_register_ep_tentative (
-  struct ucx_device * ucx_device, struct ep_instance * ep_instance,
-  gaspi_rank_t rank
-)
-{
-  if (rank >= ucx_device->endpoints->tnc)
-  {
-    fprintf (stderr, "Invalid rank value");
-    /* TODO: Send error */
-    goto err;
-  }
-  
-  struct ucx_device_ep_entry* endpoint_entry = &ucx_device->endpoints->ary[rank];
-  if (endpoint_entry->status != ucx_device_endpoint_not_connected)
-  {
-    fprintf (stderr, "Connection under way or established for rank %d\n", (int) rank);
-    do_ep_instance_close (ep_instance, UCP_EP_CLOSE_MODE_FORCE);
-    goto err;
-  }
-  ep_instance->rank = rank;
-  ep_instance->have_rank = 1;
-  *endpoint_entry = (struct ucx_device_ep_entry) {
-    .status = ucx_device_endpoint_connecting,
-    .ep = ep_instance->ucp_ep,
-    .ep_instance = ep_instance
-  };
-
-  return UCX_DEVICE_OK;
-
-err:
-  return UCX_DEVICE_ERR_UNSPECIFIED;
-}
-
-static
-ucx_device_status_t
-do_register_ep (
-  struct ucx_device * ucx_device, struct ep_instance * ep_instance,
-  gaspi_rank_t rank
-) {
-  if (rank >= ucx_device->endpoints->tnc)
-  {
-    fprintf (stderr, "Invalid rank value");
-    /* TODO: Send error */
-    goto err;
-  }
-  
-  struct ucx_device_ep_entry* endpoint_entry = &ucx_device->endpoints->ary[rank];
-  if (endpoint_entry->status == ucx_device_endpoint_ok)
-  {
-    fprintf (stderr, "An endpoint has already been assigned to rank %d\n", (int) rank);
-    do_ep_instance_close (ep_instance, UCP_EP_CLOSE_MODE_FORCE);
-    goto err;
-  }
-  ep_instance->rank = rank;
-  ep_instance->have_rank = 1;
-  *endpoint_entry = (struct ucx_device_ep_entry) {
-    .status = ucx_device_endpoint_ok,
-    .ep = ep_instance->ucp_ep,
-    .ep_instance = ep_instance
-  };
-
-  return UCX_DEVICE_OK;
-
-err:
-  return UCX_DEVICE_ERR_UNSPECIFIED;
 }
 
 /* 
@@ -308,14 +239,16 @@ cb_just_free_request (void * request, ucs_status_t status, void * user_data)
 
 static
 void
-do_send_hu (ucp_ep_h ep, enum ucx_dev_am msg_type, gaspi_rank_t * our_rank)
+do_send_hu (ucp_ep_h ep, enum ucx_dev_am msg_type, gaspi_rank_t our_rank)
 {
+  enum ucp_send_am_flags flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_COPY_HEADER;
+  if (msg_type == UCX_DEV_HUHU) flags |= UCP_AM_SEND_FLAG_REPLY;
   ucs_status_ptr_t request = ucp_am_send_nbx (
-    ep, msg_type, our_rank, sizeof(gaspi_rank_t), NULL, 0,
+    ep, msg_type, &our_rank, sizeof(gaspi_rank_t), NULL, 0,
     & (ucp_request_param_t) {
       .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
       .cb = { .send = cb_just_free_request },
-      .flags = UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_EAGER
+      .flags = flags
     }
   );
   if (UCS_PTR_IS_ERR (request))
@@ -333,47 +266,79 @@ on_am_huhu (
 )
 {
   struct ucx_device * ucx_device = (struct ucx_device *) arg;
-  gaspi_rank_t * peer_rank = (gaspi_rank_t *) header;
+  gaspi_rank_t peer_rank = * (gaspi_rank_t *) header;
+  gaspi_rank_t our_rank = ucx_device->rank;
 
   fprintf (stderr, "Received a HUHU.\n");
-  fprintf (stderr, "Received rank: %d\n", (int) *peer_rank);
+  fprintf (stderr, "Received rank: %u\n", (unsigned int) peer_rank);
 
   if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))
   {
     fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
     goto err;
   }
+  if (peer_rank >= ucx_device->endpoints->tnc)
+  {
+    fprintf (stderr, "Invalid rank value received\n");
+    /* TODO: Send error */
+    goto err;
+  }
 
   struct ucx_device_ep_entry* endpoint_entry = 
-    &ucx_device->endpoints->ary[*peer_rank];
-  enum ucx_device_endpoint_status ep_status = endpoint_entry->status;
-  if (ep_status == ucx_device_endpoint_connecting && ucx_device->rank > *peer_rank)
+    &ucx_device->endpoints->ary[peer_rank];
+
+  /* If there is an open connection attempt from our side and the incoming attempt
+   * has priority, we cancel our own connection attempt and continue with
+   * the incoming attempt. */
+  if (
+    endpoint_entry->status == ucx_device_endpoint_connecting && our_rank > peer_rank
+  )
   {
     struct ep_instance * ep_instance = endpoint_entry->ep_instance;
-    do_unregister_ep (ep_instance);
+    ep_instance->have_rank = 0;
+    *endpoint_entry = (struct ucx_device_ep_entry) {
+      .status = ucx_device_endpoint_not_connected
+    };
     do_ep_instance_close (ep_instance, UCP_EP_CLOSE_MODE_FORCE);
-    ep_status = ucx_device_endpoint_not_connected;
   }
-  if (ep_status == ucx_device_endpoint_not_connected)
-  {
-    struct ucp_ep_attr attr = { .field_mask = UCP_EP_ATTR_FIELD_USER_DATA };
-    ucs_status_t status = ucp_ep_query (param->reply_ep, &attr);
-    if (status != UCS_OK || !(attr.field_mask & UCP_EP_ATTR_FIELD_USER_DATA))
-    {
-      fprintf (stderr, "Could not query reply ep\n");
-      goto err;
-    }
-    struct ep_instance * ep_instance = (struct ep_instance *) attr.user_data;
-    if (do_register_ep (ucx_device, ep_instance, *peer_rank) != UCX_DEVICE_OK)
-    {
-      fprintf (stderr, "Could not register endpoint for rank %d\n", *peer_rank);
-      goto err;
-    }
 
-    do_send_hu (param->reply_ep, UCX_DEV_REHU, &ucx_device->rank);
+  /* Query reply ep for associated ep_instance. */
+  struct ucp_ep_attr attr = { .field_mask = UCP_EP_ATTR_FIELD_USER_DATA };
+  ucs_status_t status = ucp_ep_query (param->reply_ep, &attr);
+  if (status != UCS_OK || !(attr.field_mask & UCP_EP_ATTR_FIELD_USER_DATA))
+  {
+    fprintf (stderr, "Could not query reply ep\n");
+    goto err;
   }
+  struct ep_instance * reply_ep_instance = (struct ep_instance *) attr.user_data;
+
+  /* If we already have an ep for this rank, cancel incoming connection attempt. */
+  if (
+    endpoint_entry->status != ucx_device_endpoint_not_connected && our_rank != peer_rank
+  )
+  {
+    if (reply_ep_instance != endpoint_entry->ep_instance)
+    {
+      do_ep_instance_close (reply_ep_instance, UCP_EP_CLOSE_MODE_FORCE);
+    }
+    goto out;
+  }
+
+  /* Register reply_ep as endpoint for peer_rank. */
+  reply_ep_instance->rank = peer_rank;
+  reply_ep_instance->have_rank = 1;
+  *endpoint_entry = (struct ucx_device_ep_entry) {
+    .status = ucx_device_endpoint_ok,
+    .ep = reply_ep_instance->ucp_ep,
+    .ep_instance = reply_ep_instance
+  };
+
+  /* Send REHU to peer for confirmation. */
+  if (our_rank == peer_rank) goto out;
+  do_send_hu (reply_ep_instance->ucp_ep, UCX_DEV_REHU, our_rank);
 
 err:
+out:
   return UCS_OK;
 }
 
@@ -385,41 +350,46 @@ on_am_rehu (
 )
 {
   struct ucx_device * ucx_device = (struct ucx_device *) arg;
-  gaspi_rank_t * rank = (gaspi_rank_t *) header;
+  gaspi_rank_t peer_rank = * (gaspi_rank_t *) header;
 
   fprintf (stderr, "Received a REHU.\n");
-  fprintf (stderr, "Received rank: %d\n", (int) *rank);
+  fprintf (stderr, "Received rank: %u\n", (unsigned int) peer_rank);
 
-  if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))
+  if (peer_rank >= ucx_device->endpoints->tnc)
   {
-    fprintf (stderr, "Endpoint missing, send with UCP_AM_SEND_FLAG_REPLY");
+    fprintf (stderr, "Invalid rank value received.\n");
+    /* TODO: Send error? */
     goto err;
   }
-  struct ucp_ep_attr attr = { .field_mask = UCP_EP_ATTR_FIELD_USER_DATA };
-  ucs_status_t status = ucp_ep_query (param->reply_ep, &attr);
-  if (status != UCS_OK || !(attr.field_mask & UCP_EP_ATTR_FIELD_USER_DATA))
+  
+  struct ucx_device_ep_entry* endpoint_entry = &ucx_device->endpoints->ary[peer_rank];
+  if (endpoint_entry->status != ucx_device_endpoint_connecting)
   {
-    fprintf (stderr, "Could not query reply ep\n");
+    fprintf (stderr, "Unexpected REHU -- ignoring.\n");
     goto err;
   }
-  struct ep_instance * ep_instance = (struct ep_instance *) attr.user_data;
-  if (do_register_ep (ucx_device, ep_instance, *rank) != UCX_DEVICE_OK)
-  {
-    fprintf (stderr, "Could not register endpoint for rank %d\n", *rank);
-    goto err;
-  }
+  endpoint_entry->status = ucx_device_endpoint_ok;
 
-err: /* Ignore errors TODO: acceptable? */
+  /* TODO: Should we verify that the REHU was received on the correct endpoint? */
+
+err:
   return UCS_OK;
 }
 
 static
-int
+void
 do_connect_to (
   struct ucx_device * ucx_device, char const * hostip4, uint16_t port,
   gaspi_rank_t peer_rank
 )
 {
+  struct ucx_device_ep_entry* endpoint_entry = &ucx_device->endpoints->ary[peer_rank];
+  if (endpoint_entry->status != ucx_device_endpoint_not_connected)
+  {
+    fprintf (stderr, "Connection under way or established for rank %d\n", (int) peer_rank);
+    goto out_existing_connection;
+  }
+
   fprintf (stderr, "Creating endpoint\n");
 
   struct sockaddr_in serv_addr = {
@@ -429,17 +399,9 @@ do_connect_to (
   if (inet_pton (AF_INET, hostip4, &serv_addr.sin_addr) < 0)
   {
     fprintf (stderr, "Invalid address/Address not supported");
-    return 1;
+    goto err;
   };
   
-  if (
-    ucx_device->endpoints->ary[peer_rank].status != ucx_device_endpoint_not_connected
-  )
-  {
-    fprintf (stderr, "Connection already established or under way\n");
-    goto out_existing_connection;
-  }
-
   struct ep_instance * ep_instance = do_ep_instance_create (
     ucx_device,
     (ucp_ep_params_t) {
@@ -451,7 +413,7 @@ do_connect_to (
       .err_handler = { .cb = cb_ep_error },
       .flags = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER,
       .sockaddr = {
-        .addr = (struct sockaddr *) & serv_addr,
+        .addr = (struct sockaddr *) &serv_addr,
         .addrlen = sizeof (struct sockaddr_in)
       }
     }
@@ -459,25 +421,24 @@ do_connect_to (
   if (!ep_instance)
   {
     fprintf(stderr, "Creating client EP failed\n");
-    return 1;
+    goto err;
   }
-  do_register_ep_tentative (ucx_device, ep_instance, peer_rank);
+  ep_instance->rank = peer_rank;
+  ep_instance->have_rank = 1;
+
+  *endpoint_entry = (struct ucx_device_ep_entry) {
+    .status = ucx_device_endpoint_connecting,
+    .ep = ep_instance->ucp_ep,
+    .ep_instance = ep_instance
+  };
 
   fprintf(stderr, "Client endpoint created\n");
 
-  struct ucp_ep_attr attr = { .field_mask = UCP_EP_ATTR_FIELD_USER_DATA };
-  ucs_status_t status = ucp_ep_query (ep_instance->ucp_ep, &attr);
-  if (status != UCS_OK)
-  {
-    fprintf (stderr, "Could not query reply ep\n");
-    goto err;
-  }
-
-  do_send_hu (ep_instance->ucp_ep, UCX_DEV_HUHU, &ucx_device->rank);
+  do_send_hu (ep_instance->ucp_ep, UCX_DEV_HUHU, ucx_device->rank);
 
 err:
 out_existing_connection:
-  return 0;
+  return;
 }
 
 ucx_device_status_t
