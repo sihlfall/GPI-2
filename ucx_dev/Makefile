@@ -7,7 +7,7 @@ SRC=./src
 SRC_GPI2UCX=../src/devices/ucx
 SRC_STUB=./stub/src
 BIN=./bin
-INC=-I/home/jbecker/local/include -I./stub/include -I../src/devices/ucx -I.
+INC=-I/home/cluster/local/include -I./stub/include -I../src/devices/ucx -I.
 LIBS=/home/cluster/local/lib64/libGPI2.la
 OBJ_NAMES_GPI2UCX=GPI2_UCX_ATOMIC.o GPI2_UCX_GRP.o GPI2_UCX_IO.o \
   GPI2_UCX_PASSIVE.o GPI2_UCX_SEG.o GPI2_UCX.o \

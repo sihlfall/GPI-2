@@ -2,7 +2,7 @@
 # Check and select device
 # ----------------------------------
 AC_DEFUN([ACX_USABLE_DEVICE],[
-        if test x${with_infiniband} != xno -a x${with_ethernet} != xno; then
+		if test x${with_infiniband} != xno -a x${with_ethernet} != xno; then
            TITLE([Checking for device(s):])
            AC_MSG_ERROR([Concurrently Infiniband and Ethernet is not supported])
 		elif test x${with_infiniband} != xno -a x${with_ucx} != xno; then
@@ -11,25 +11,35 @@ AC_DEFUN([ACX_USABLE_DEVICE],[
 		elif test x${with_ethernet} != xno -a x${with_ucx} != xno; then
            TITLE([Checking for device(s):])
            AC_MSG_ERROR([Concurrently Ethernet and UCX is not supported])
-        else
-	       TITLE([Checking for Infiniband...])
-           with_infiniband=yes
-           ACX_INFINIBAND
-           if test x${HAVE_INFINIBAND} = x0; then
-	          AC_MSG_NOTICE([Infiniband can not be used])
-		   	  TITLE([Checking for UCX...])
-			  with_ucx=yes
+    else
+			if test x${with_infiniband} != xno; then
+				TITLE([Checking for Infiniband...])
+				ACX_INFINIBAND
+				if test x${HAVE_INFINIBAND} = x0; then
+					AC_MSG_NOTICE([Infiniband cannot be used])
+					with_infiniband=no
+				fi
+			fi
+			if test x${with_infiniband} == xno -a x${with_ucx} != xno; then
+				TITLE([Checking for UCX...])
 			  ACX_UCX
 			  if test x${HAVE_UCX} = x0; then
-  	            AC_MSG_NOTICE([UCX can not be used])
-                TITLE([Checking for Ethernet])
-                ACX_ETHERNET
-                if test x${HAVE_TCP} = x0; then
-              	  AC_MSG_ERROR([Neither Infiniband nor Ethernet are usable])
-                fi
-              fi
-		   fi  
-        fi
+					AC_MSG_NOTICE([UCX cannot be used])
+					with_ucx=no
+				fi
+			fi
+			if test x${with_infiniband} == xno -a x${with_ucx} == xno -a x${with_ethernet} != xno; then
+				TITLE([Checking for Ethernet])
+				ACX_ETHERNET
+				if test x${HAVE_TCP} = x0; then
+					AC_MSG_NOTICE([Ethernet cannot be used])
+					with_ethernet=no
+				fi
+			fi
+			if test x${with_infiniband} == xno -a x${with_ucx} == xno -a x${with_ethernet} == xno; then
+				AC_MSG_ERROR([Neither Infiniband nor UCX nor Ethernet are usable])
+			fi
+		fi
 
 	# COPY DEFAULT FILES FOR TESTING
         AM_CONDITIONAL([WITH_ETHERNET], test x${HAVE_TCP} = x1)
@@ -194,7 +204,7 @@ AC_DEFUN([ACX_UCX],[
 				[HAVE_UCX_HEADER=1],[HAVE_UCX_HEADER=0])
 			for ucxlib in libucp.so libucp.a; do
 				for ucxlib_path in lib lib64; do
-					ac_lib_ucxlib=$ac_path_ucxlib/$ucxlib_path
+					ac_lib_ucxlib=$ac_path_ucx/$ucxlib_path
 					AC_CHECK_FILE($ac_lib_ucxlib/$ucxlib,[HAVE_UCX_LIB=1],[HAVE_UCX_LIB=0])
 					if test ${HAVE_UCX_LIB} = 1; then
 						break
@@ -243,6 +253,7 @@ AC_DEFUN([ACX_UCX],[
 	if test ${HAVE_UCX_HEADER} = 1 -a ${HAVE_UCX_LIB} = 1; then
 		HAVE_UCX=1
 		AC_SUBST(ac_lib_ucx,["-lucp -lucs -lucm -luct"])
+		AC_SUBST(ac_path_ucx)
 	else
 		HAVE_UCX=0
 	fi

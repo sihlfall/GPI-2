@@ -9,8 +9,7 @@
 
 typedef struct
 {
-  struct ucx_device oob_server;
-  ucp_ep_h * eps;
+  struct ucx_device ucx_device;
 } gaspi_ucx_ctx;
 
 #endif //_GPI2_UCX_H_

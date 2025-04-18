@@ -457,7 +457,7 @@ ucx_device_connect_to (
   return alf_enqueue (&ucx_device->queue, (struct alf_tag_payload_pair) {
     .tag = UCX_DEV_MSG_CONNECT,
     .payload = (alf_payload_type) d
-  }) ? UCX_DEVICE_ERR_UNSPECIFIED : UCX_DEVICE_OK;
+  }) ? UCX_DEVICE_OK : UCX_DEVICE_ERR_UNSPECIFIED;
 }
 
 /* 

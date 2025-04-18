@@ -32,28 +32,23 @@ pgaspi_dev_create_endpoint (gaspi_context_t const *const GASPI_UNUSED (gctx),
 
 //TODO:
 int
-pgaspi_dev_disconnect_context (gaspi_context_t * const gctx,
-                               const int i)
+pgaspi_dev_disconnect_context (gaspi_context_t * const gctx, const int i)
 {
-  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
-
-  if (ucx_device_ctx->eps[i]) {
-    ucp_ep_close_nb (ucx_device_ctx->eps[i], UCP_EP_CLOSE_MODE_FLUSH);
-    ucx_device_ctx->eps[i] = 0;
-  }
-  
-  return 0;
+  NOTIMPLEMENTED()
 }
 
 int
-pgaspi_dev_connect_context (gaspi_context_t const *const gctx,
-                            const int i)
+pgaspi_dev_connect_context (gaspi_context_t const *const gctx, const int i)
 {
   gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
-  return ucx_device_connect_to (&ucx_device_ctx->oob_server, /*i,*/ pgaspi_gethostname (i),
-                              gctx->config->dev_config.params.tcp.port + i, i
-                              /*gctx->poff[i]*/);
+  ucx_device_status_t status = ucx_device_connect_to (&ucx_device_ctx->ucx_device, /*i,*/
+    pgaspi_gethostname (i),
+    gctx->config->dev_config.params.tcp.port + i, i
+    /*gctx->poff[i]*/
+  );
+  fprintf (stderr, "Connect to returned status: %d\n", status);
+  return status == UCX_DEVICE_OK ? 0 : -1;
 }
 
 int
@@ -89,52 +84,46 @@ pgaspi_dev_comm_queue_is_valid (gaspi_context_t const *const gctx,
 int
 pgaspi_dev_init_core (gaspi_context_t * const gctx)
 {
-  int ret = 0;
-
   gctx->device = calloc (1, sizeof (gctx->device));
-  if (NULL == gctx->device)
-  {
-    return -1;
-  }
+  if (!gctx->device) goto err_alloc_gctx_device;
 
-  gctx->device->ctx = calloc (1, sizeof (gaspi_ucx_ctx));
-  if (NULL == gctx->device->ctx)
-  {
-    free (gctx->device);
-    return -1;
-  }
+  gaspi_ucx_ctx * ucx_dev_ctx = calloc (1, sizeof (gaspi_ucx_ctx));
+  if (!ucx_dev_ctx) goto err_alloc_gctx_device_ctx;
+  gctx->device->ctx = ucx_dev_ctx;
 
-  gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
-
-  ucx_dev_ctx->eps = calloc(gctx->tnc, sizeof (ucp_ep_h));
-
-  if ( ucx_device_init (&ucx_dev_ctx->oob_server, gctx->rank, gctx->config->dev_config.params.tcp.port) != 0)
+  if (ucx_device_init (
+    &ucx_dev_ctx->ucx_device, gctx->rank, gctx->config->dev_config.params.tcp.port + gctx->rank
+  ) != UCX_DEVICE_OK)
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to initialize device.");
-    return -1;
+    goto err_device_init;
   }
-/*
-  if (ucx_dev_create_listener (&ucx_dev_ctx->oob_server) != 0)
+
+  if (ucx_device_start (&ucx_dev_ctx->ucx_device) != UCX_DEVICE_OK)
   {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to create listener.");
-    return -1;
+    GASPI_DEBUG_PRINT_ERROR ("Failed to start device.");
+    goto err_device_start;
   }
-*/
-  return ret;
+
+  return 0;
+
+err_device_start:
+  ucx_device_cleanup (&ucx_dev_ctx->ucx_device);
+err_device_init:
+  free (ucx_dev_ctx);
+err_alloc_gctx_device_ctx:
+  free (gctx->device); gctx->device = NULL;
+err_alloc_gctx_device:
+  return -1;
 }
 
 int
 pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
 {
-  gaspi_ucx_ctx *const ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
-  for (int i = 0; i < gctx->tnc; ++i) {
-    if (ucx_dev_ctx->eps[i]) {
-      ucp_ep_close_nb (ucx_dev_ctx->eps[i], UCP_EP_CLOSE_MODE_FORCE);
-    }
-  }
-  ucx_device_cleanup (&ucx_dev_ctx->oob_server);
-  free (ucx_dev_ctx->eps);
-  free (gctx->device->ctx);
-  gctx->device->ctx = NULL;
+  gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  ucx_device_stop (&ucx_dev_ctx->ucx_device);
+  ucx_device_cleanup (&ucx_dev_ctx->ucx_device);
+  free (ucx_dev_ctx);
+  free (gctx->device); gctx->device = NULL;
   return 0;
 }
