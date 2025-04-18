@@ -45,6 +45,12 @@ typedef struct
   char dummy[63];
 } gaspi_lock_t;
 
+#ifdef GPI_DEVICE_UCX
+struct gaspi_rc_mseg_rkey {
+  void * buffer; size_t buffer_size;
+};
+#endif
+
 typedef struct
 {
   union
@@ -65,6 +71,9 @@ typedef struct
 
 #ifdef GPI2_DEVICE_IB
   unsigned int rkey[2];
+#endif
+#ifdef GPI_DEVICE_UCX
+  struct gaspi_rc_mseg_rkey rkey[2];
 #endif
 
   unsigned long size;

@@ -7,7 +7,9 @@
                 "${workspaceFolder}/src",
                 "${HOME}/local/include"
             ],
-            "defines": [],
+            "defines": [
+                "GPI_DEVICE_UCX"
+            ],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",
             "cppStandard": "gnu++17",

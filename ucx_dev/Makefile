@@ -1,13 +1,13 @@
 C=gcc
 CC=g++
-CFLAGS=-std=c17 -pthread -Wall -pedantic -DDEBUG=1 -O3 -flto -march=native -mtune=native
+CFLAGS=-std=c17 -pthread -Wall -pedantic -DDEBUG=1 -DGPI_DEVICE_UCX=1 -O3 -flto -march=native -mtune=native
 CCFLAGS=-std=c++20 -Wall -pedantic -O3 -flto -march=native -mtune=native
 LINKFLAGS=-pthread -L/home/jbecker/local/lib -lucp -lucs -flto -latomic
 SRC=./src
 SRC_GPI2UCX=../src/devices/ucx
 SRC_STUB=./stub/src
 BIN=./bin
-INC=-I/home/cluster/local/include -I./stub/include -I../src/devices/ucx -I.
+INC=-I./stub/include -I/home/cluster/local/include -I../src/devices/ucx -I.
 LIBS=/home/cluster/local/lib64/libGPI2.la
 OBJ_NAMES_GPI2UCX=GPI2_UCX_ATOMIC.o GPI2_UCX_GRP.o GPI2_UCX_IO.o \
   GPI2_UCX_PASSIVE.o GPI2_UCX_SEG.o GPI2_UCX.o \
