@@ -124,7 +124,7 @@ out:
 err_memh_pack_notif_spc_memh:
   ucp_mem_unmap (ucx_device->ucp_ctx, notif_spc_memh);
 err_mem_map_notif_spc_memh:
-  ucp_memh_buffer_release(data_rkey_buffer, NULL);
+  ucp_rkey_buffer_release(data_rkey_buffer);
 err_memh_pack_memh:
   ucp_mem_unmap (ucx_device->ucp_ctx, data_memh);
 err_mem_map_data:
