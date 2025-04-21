@@ -15,6 +15,7 @@ struct mpmc_queue;
 
 int alf_enqueue (struct mpmc_queue * q, struct alf_tag_payload_pair d);
 int alf_dequeue (struct mpmc_queue * q, struct alf_tag_payload_pair * d);
+int alf_peek (struct mpmc_queue * q, struct alf_tag_payload_pair * d);
 int alf_is_empty (struct mpmc_queue * q);
 
 #endif

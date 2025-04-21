@@ -239,12 +239,12 @@ cb_just_free_request (void * request, ucs_status_t status, void * user_data)
 
 static
 void
-do_send_hu (ucp_ep_h ep, enum ucx_dev_am msg_type, gaspi_rank_t our_rank)
+do_send_hu (ucp_ep_h ep, enum ucx_dev_am msg_type, gaspi_rank_t * our_rank)
 {
-  enum ucp_send_am_flags flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_COPY_HEADER;
+  enum ucp_send_am_flags flags = UCP_AM_SEND_FLAG_EAGER;
   if (msg_type == UCX_DEV_HUHU) flags |= UCP_AM_SEND_FLAG_REPLY;
   ucs_status_ptr_t request = ucp_am_send_nbx (
-    ep, msg_type, &our_rank, sizeof(gaspi_rank_t), NULL, 0,
+    ep, msg_type, our_rank, sizeof(gaspi_rank_t), NULL, 0,
     & (ucp_request_param_t) {
       .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
       .cb = { .send = cb_just_free_request },
@@ -267,9 +267,10 @@ on_am_huhu (
 {
   struct ucx_device * ucx_device = (struct ucx_device *) arg;
   gaspi_rank_t peer_rank = * (gaspi_rank_t *) header;
-  gaspi_rank_t our_rank = ucx_device->rank;
+  gaspi_rank_t * our_rank = &ucx_device->rank;
 
   fprintf (stderr, "Received a HUHU.\n");
+  fprintf (stderr, "Received header length: %llu\n", header_length);
   fprintf (stderr, "Received rank: %u\n", (unsigned int) peer_rank);
 
   if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))
@@ -291,7 +292,7 @@ on_am_huhu (
    * has priority, we cancel our own connection attempt and continue with
    * the incoming attempt. */
   if (
-    endpoint_entry->status == ucx_device_endpoint_connecting && our_rank > peer_rank
+    endpoint_entry->status == ucx_device_endpoint_connecting && *our_rank > peer_rank
   )
   {
     struct ep_instance * ep_instance = endpoint_entry->ep_instance;
@@ -314,7 +315,7 @@ on_am_huhu (
 
   /* If we already have an ep for this rank, cancel incoming connection attempt. */
   if (
-    endpoint_entry->status != ucx_device_endpoint_not_connected && our_rank != peer_rank
+    endpoint_entry->status != ucx_device_endpoint_not_connected && *our_rank != peer_rank
   )
   {
     if (reply_ep_instance != endpoint_entry->ep_instance)
@@ -352,7 +353,7 @@ on_am_rehu (
   struct ucx_device * ucx_device = (struct ucx_device *) arg;
   gaspi_rank_t peer_rank = * (gaspi_rank_t *) header;
 
-  fprintf (stderr, "Received a REHU.\n");
+  fprintf (stderr, "[Rank %d] Received a REHU.\n", ucx_device->rank);
   fprintf (stderr, "Received rank: %u\n", (unsigned int) peer_rank);
 
   if (peer_rank >= ucx_device->endpoints->tnc)
@@ -365,7 +366,7 @@ on_am_rehu (
   struct ucx_device_ep_entry* endpoint_entry = &ucx_device->endpoints->ary[peer_rank];
   if (endpoint_entry->status != ucx_device_endpoint_connecting)
   {
-    fprintf (stderr, "Unexpected REHU -- ignoring.\n");
+    fprintf (stderr, "[Rank %d] Unexpected REHU -- ignoring, my status is %d.\n", ucx_device->rank, endpoint_entry->status);
     goto err;
   }
   endpoint_entry->status = ucx_device_endpoint_ok;
@@ -433,8 +434,8 @@ do_connect_to (
   };
 
   fprintf(stderr, "Client endpoint created\n");
-
-  do_send_hu (ep_instance->ucp_ep, UCX_DEV_HUHU, ucx_device->rank);
+  fprintf(stderr, "Sending HUHU with rank %d\n", ucx_device->rank);
+  do_send_hu (ep_instance->ucp_ep, UCX_DEV_HUHU, &ucx_device->rank);
 
 err:
 out_existing_connection:
@@ -462,6 +463,89 @@ ucx_device_connect_to (
 
 /* 
  * ************************************************************************************
+ * RDMA write
+ * ************************************************************************************
+ */
+
+static
+void
+do_rdma_write (
+  struct ucx_device * ucx_device, void * local_addr, int length, int dst,
+  struct gaspi_rc_mseg_rkey * rkey,
+  uint64_t remote_addr
+)
+{
+  if (dst < 0 || dst >= ucx_device->endpoints->tnc)
+  {
+    fprintf (stderr, "Invalid destination: %d\n", dst);
+    goto err;
+  }
+  struct ucx_device_ep_entry * ep_entry = &ucx_device->endpoints->ary[dst];
+  if (ep_entry->status != ucx_device_endpoint_ok)
+  {
+    fprintf (stderr, "Endpoint not connected (%d)\n", dst);
+    goto err;
+  }
+  ucp_ep_h ep = ep_entry->ep;
+
+  ucp_rkey_h rkey_handle;
+  {
+    if (ucp_ep_rkey_unpack (ep, rkey->buffer, &rkey_handle) != UCS_OK)
+    {
+      fprintf (stderr, "Could not unpack rkey handle\n");
+      goto err;
+    }
+  }
+
+  ucs_status_ptr_t request = ucp_put_nbx (
+    ep, local_addr, length, remote_addr, rkey_handle,
+    & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
+      .cb = { .send = cb_just_free_request }, /* TODO: not good, rkey handle must be destroyed as well */
+    }
+  );
+  if (request == UCS_OK)
+  {
+   ucp_rkey_destroy (rkey_handle); 
+  }
+  else if (UCS_PTR_IS_ERR(request))
+  {
+    fprintf (stderr, "ucp_put_nbx resulted in an error\n");
+    goto err_put_nbx;
+  }
+
+  return;
+
+err_put_nbx:
+  ucp_rkey_destroy (rkey_handle);
+err:
+}
+
+ucx_device_status_t
+ucx_device_rdma_write (
+  struct ucx_device * ucx_device, void * local_addr, int length, int dst,
+  struct gaspi_rc_mseg_rkey * rkey,
+  void * remote_addr
+)
+{
+  struct ucx_device_msg_rdma_write_data * d =
+    calloc (1, sizeof (struct ucx_device_msg_rdma_write_data));
+  *d = (struct ucx_device_msg_rdma_write_data) {
+    .local_addr = local_addr,
+    .length = length,
+    .dst = dst,
+    .rkey = rkey,
+    .remote_addr = remote_addr
+  };
+  fprintf (stderr, "[Rank %d] Enqueuing RDMA WRITE\n", ucx_device->rank);
+  return alf_enqueue (&ucx_device->queue, (struct alf_tag_payload_pair) {
+    .tag = UCX_DEV_MSG_RDMA_WRITE,
+    .payload = (alf_payload_type) d
+  }) ? UCX_DEVICE_OK : UCX_DEVICE_ERR_UNSPECIFIED;
+}
+
+/* 
+ * ************************************************************************************
  * Run (worker thread main function, incl. message loop)
  * ************************************************************************************
  */
@@ -477,19 +561,51 @@ do_run (void * args)
     fprintf (stderr, "Creating listener failed\n");
     goto err;
   }
-
+  int count = 0;
   while (!myself->should_stop)
   {
     struct alf_tag_payload_pair msg;
-    if (alf_dequeue (&myself->queue, &msg))
-    {
+    if (alf_peek (&myself->queue, &msg)) {
+      //fprintf (stderr, "[Rank %d]: Processing %d\n", myself->rank, msg.tag);
       switch (msg.tag)
       {
       case UCX_DEV_MSG_CONNECT:
         {
+          if (!alf_dequeue (&myself->queue, &msg) || msg.tag != UCX_DEV_MSG_CONNECT) {
+            fprintf (stderr, "Inconsistent queue, exiting\n");
+            goto err_inconsistent;
+          }
           struct ucx_device_msg_connect_data * p =
             (struct ucx_device_msg_connect_data *) msg.payload;
           do_connect_to (myself, p->host, p->port, p->peer_rank);
+          free (p); /* TO DO: This is pretty bad. */
+        }
+        break;
+      case UCX_DEV_MSG_RDMA_WRITE:
+        {
+          struct ucx_device_msg_rdma_write_data * p =
+            (struct ucx_device_msg_rdma_write_data *) msg.payload;
+          int dst = p->dst;
+          if (dst < 0 || dst >= myself->endpoints->tnc)
+          {
+            fprintf (stderr, "Invalid destination: %d\n", dst);
+            break; /* To do: dequeue and free payload */
+          }
+          struct ucx_device_ep_entry * ep_entry = &myself->endpoints->ary[dst];
+          if (ep_entry->status != ucx_device_endpoint_ok) {
+            if (count % 100 == 0)
+              fprintf (stderr, "[Rank %d] Endpoint %d not ok, status %d\n", myself->rank, dst, ep_entry->status);
+            ++count;
+            goto progress;
+          }
+          if (!alf_dequeue (&myself->queue, &msg) || msg.tag != UCX_DEV_MSG_RDMA_WRITE) {
+            fprintf (stderr, "Inconsistent queue, exiting\n");
+            goto err_inconsistent;
+          }
+          
+          fprintf (stderr, "Calling RDMA write\n");
+          do_rdma_write (myself, p->local_addr, p->length, p->dst,
+            p->rkey, p->remote_addr);
           free (p); /* TO DO: This is pretty bad. */
         }
         break;
@@ -498,9 +614,11 @@ do_run (void * args)
       }
     }
 
+progress:
     ucp_worker_progress(myself->ucp_worker);
   }
 
+err_inconsistent:
   do_cleanup_listener (myself);
 
 err:

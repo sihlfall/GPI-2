@@ -31,9 +31,13 @@ int
 pgaspi_dev_post_group_write (gaspi_context_t * const gctx,
                              void *local_addr, int length, int dst,
                              void *remote_addr,
-                             unsigned char g)
+                             unsigned char group)
 {
-  NOTIMPLEMENTED()
+  fprintf (stderr, "[Rank %d] Post group write called\n", gctx->rank);
+  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+
+  ucx_device_rdma_write (&ucx_device_ctx->ucx_device, local_addr, length, dst,
+    gctx->groups[group].rrcd[gctx->rank].mr[0], remote_addr);
 }
 
 /* TODO: number of elems to poll as arg */

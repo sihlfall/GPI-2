@@ -265,6 +265,36 @@ alf_dequeue (struct mpmc_queue * q, struct alf_tag_payload_pair * d)
 }
 
 int
+alf_peek (struct mpmc_queue * q, struct alf_tag_payload_pair * d)
+{
+  alf_index_type rd_index = load_atomic (&q->read_index, memory_order_relaxed);
+  while (1)
+  {
+    alf_index_type rd_seq = seq_from_index (rd_index);
+    alf_entry_type e = load_atomic (buffer_get_entry_ptr (q, rd_index), memory_order_relaxed);
+    alf_index_type seq = entry_get_seq (e);
+
+    alf_index_type delta = seq_cast (seq - rd_seq);
+    switch (delta) {
+    case 0u:
+      return 0;
+    case 1u:
+      *d = entry_get_data (e);
+      return 1;
+    case 2u:
+    case 3u:
+      if (bool_compare_and_swap_atomic_strong (
+        &q->read_index, &rd_index, rd_index + 1, memory_order_relaxed, memory_order_relaxed
+      )) break;
+      /* else fallthrough */
+    default:
+      rd_index = load_atomic (&q->read_index, memory_order_relaxed);
+      break;
+    }
+  }
+}
+
+int
 alf_is_empty (struct mpmc_queue * q)
 {
   alf_index_type rd_index = load_atomic (&q->read_index, memory_order_relaxed);

@@ -14,6 +14,7 @@
 #define UCX_DEVICE_MAX_RANKS 128
 
 #define UCX_DEV_MSG_CONNECT 1
+#define UCX_DEV_MSG_RDMA_WRITE 2
 
 #define UCX_DEVICE_OK 0
 #define UCX_DEVICE_ERR_UNSPECIFIED (-1)
@@ -24,6 +25,14 @@ struct ucx_device_msg_connect_data {
   char const * host;
   uint16_t port;
   gaspi_rank_t peer_rank;
+};
+
+struct ucx_device_msg_rdma_write_data {
+  void * local_addr;
+  int length;
+  int dst;
+  struct gaspi_rc_mseg_rkey * rkey;
+  void * remote_addr;
 };
 
 struct ucx_device;
@@ -68,6 +77,10 @@ void ucx_device_cleanup (struct ucx_device * ucx_device);
 ucx_device_status_t ucx_device_connect_to (
   struct ucx_device * ucx_device, char const * hostip4, uint16_t port,
   gaspi_rank_t peer_rank
+);
+ucx_device_status_t ucx_device_rdma_write (
+  struct ucx_device * ucx_device, void * local_addr, int length, int dst,
+  struct gaspi_rc_mseg_rkey * rkey, void * remote_addr
 );
 
 enum ucx_dev_am {
