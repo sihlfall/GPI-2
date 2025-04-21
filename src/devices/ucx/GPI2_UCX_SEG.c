@@ -47,8 +47,9 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
     if (ucp_mem_map (
       ucx_device->ucp_ctx,
       & (ucp_mem_map_params_t) {
-        .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS | UCP_MEM_MAP_PARAM_FIELD_LENGTH |
-          UCP_MEM_MAP_PARAM_FIELD_PROT | UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE,
+        .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+        UCP_MEM_MAP_PARAM_FIELD_LENGTH | UCP_MEM_MAP_PARAM_FIELD_PROT |
+        UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE,
         .address = seg->data.buf,
         .length = seg->size,
         .prot = UCP_MEM_MAP_PROT_LOCAL_READ | UCP_MEM_MAP_PROT_LOCAL_WRITE |
@@ -81,8 +82,9 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
     if (ucp_mem_map (
       ucx_device->ucp_ctx,
       & (ucp_mem_map_params_t) {
-        .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS | UCP_MEM_MAP_PARAM_FIELD_LENGTH |
-          UCP_MEM_MAP_PARAM_FIELD_PROT | UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE,
+        .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
+          UCP_MEM_MAP_PARAM_FIELD_LENGTH | UCP_MEM_MAP_PARAM_FIELD_PROT |
+          UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE,
         .address = seg->notif_spc.buf,
         .length = seg->notif_spc_size,
         .prot = UCP_MEM_MAP_PROT_LOCAL_READ | UCP_MEM_MAP_PROT_LOCAL_WRITE |
