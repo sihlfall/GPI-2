@@ -558,7 +558,7 @@ ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t hos
     ucs_status_t status = ucp_init (
       & (ucp_params_t) {
         .field_mask = UCP_PARAM_FIELD_FEATURES,
-        .features = UCP_FEATURE_AM
+        .features = UCP_FEATURE_AM | UCP_FEATURE_RMA | UCP_FEATURE_AMO64
       },
       config,
       &ucp_context

@@ -35,6 +35,7 @@ devices/ucx/GPI2_UCX_PASSIVE.c devices/ucx/GPI2_UCX_SEG.c devices/ucx/GPI2_UCX_G
 devices/ucx/ucx_device.c devices/ucx/mpmc_queue.c
 SRCS += devices/ucx/GPI2_UCX.h devices/ucx/ucx_device.h devices/ucx/mpmc_queue.h \
 devices/ucx/mpmc_queue_struct.h
+default_includes += -DGPI2_DEVICE_UCX
 else
 SRCS += devices/tcp/list.c devices/tcp/rb.c devices/tcp/tcp_device.c \
 devices/tcp/GPI2_TCP.c devices/tcp/GPI2_TCP_IO.c devices/tcp/GPI2_TCP_SEG.c \

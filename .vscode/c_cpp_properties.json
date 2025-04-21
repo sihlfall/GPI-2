@@ -8,7 +8,7 @@
                 "${HOME}/local/include"
             ],
             "defines": [
-                "GPI_DEVICE_UCX"
+                "GPI2_DEVICE_UCX"
             ],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",

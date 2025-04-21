@@ -1,6 +1,6 @@
 C=gcc
 CC=g++
-CFLAGS=-std=c17 -pthread -Wall -pedantic -DDEBUG=1 -DGPI_DEVICE_UCX=1 -O3 -flto -march=native -mtune=native
+CFLAGS=-std=c17 -pthread -Wall -pedantic -DDEBUG=1 -DGPI2_DEVICE_UCX=1 -O3 -flto -march=native -mtune=native
 CCFLAGS=-std=c++20 -Wall -pedantic -O3 -flto -march=native -mtune=native
 LINKFLAGS=-pthread -L/home/jbecker/local/lib -lucp -lucs -flto -latomic
 SRC=./src
