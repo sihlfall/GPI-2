@@ -1312,7 +1312,7 @@ gaspi_sn_backend (void* GASPI_UNUSED (args))
   struct epoll_event *ret_ev;
   gaspi_mgmt_header *mgmt;
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
-
+  
   signal (SIGSTKFLT, gaspi_sn_cleanup);
   signal (SIGPIPE, SIG_IGN);
 

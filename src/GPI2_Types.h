@@ -46,8 +46,11 @@ typedef struct
 } gaspi_lock_t;
 
 #ifdef GPI2_DEVICE_UCX
-struct gaspi_rc_mseg_rkey {
-  void * buffer; size_t buffer_size;
+struct gaspi_rc_mseg_mr {
+  void * mem_h;
+  void * addr;
+  void * rkey_buffer;
+  size_t rkey_buffer_size;
 };
 #endif
 
@@ -67,13 +70,14 @@ typedef struct
     unsigned long addr;
   } notif_spc;
 
+#ifdef GPI2_DEVICE_UCX
+  struct gaspi_rc_mseg_mr mr[2];
+#else
   void *mr[2];
+#endif
 
 #ifdef GPI2_DEVICE_IB
   unsigned int rkey[2];
-#endif
-#ifdef GPI2_DEVICE_UCX
-  struct gaspi_rc_mseg_rkey rkey[2];
 #endif
 
   unsigned long size;

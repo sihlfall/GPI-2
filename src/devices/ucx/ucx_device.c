@@ -25,6 +25,17 @@
 #define container_of(ptr, type, member) \
   ((type *)((char *)(ptr) - offsetof(type, member)))
 
+
+struct ucx_device_msg_rdma_write_data {
+  void * local_addr;
+  int length;
+  int dst;
+  void * rkey_buffer;
+  void * remote_addr;
+  struct mpmc_queue * cq;
+  uint64_t wr_id;
+};  
+
 /* user_data associated with an endpoint;
  * since it contains the ucp_ep_h, it can be used for
  * identifying the endpoint */
@@ -335,7 +346,7 @@ on_am_huhu (
   };
 
   /* Send REHU to peer for confirmation. */
-  if (our_rank == peer_rank) goto out;
+  if (*our_rank == peer_rank) goto out;
   do_send_hu (reply_ep_instance->ucp_ep, UCX_DEV_REHU, our_rank);
 
 err:
@@ -467,14 +478,58 @@ ucx_device_connect_to (
  * ************************************************************************************
  */
 
+struct cb_rdma_write_complete_user_data {
+  struct mpmc_queue * cq;
+  uint64_t wr_id;
+};
+
+static
+void
+enqueue_send_completion (struct mpmc_queue * cq, uint64_t wr_id)
+{
+  struct ucx_wc * wc = malloc (sizeof (struct ucx_wc));
+  *wc = (struct ucx_wc) {
+    .status = UCX_WC_SUCCESS, /* TODO: Might also be an error! */
+    .wr_id = wr_id
+  };
+
+  (void) alf_enqueue (cq, (struct alf_tag_payload_pair) { .payload = (uintptr_t) wc });
+}
+
+static
+void
+cb_rdma_write_complete (void * request, ucs_status_t status, void * user_data)
+{
+  /* TODO: not good, rkey handle must be destroyed as well!!!! */
+
+  if (status != UCS_OK) goto err;
+  struct cb_rdma_write_complete_user_data * ud =
+    (struct cb_rdma_write_complete_user_data *) user_data;
+
+  enqueue_send_completion (ud->cq, ud->wr_id);
+  free (user_data);
+  ucp_request_free (request);
+  return;
+
+err:
+  fprintf (stderr, "rdma write resulted in an error\n");
+}
+
+ 
+
 static
 void
 do_rdma_write (
   struct ucx_device * ucx_device, void * local_addr, int length, int dst,
-  struct gaspi_rc_mseg_rkey * rkey,
-  uint64_t remote_addr
+  void * rkey_buffer, uint64_t remote_addr,
+  struct mpmc_queue * cq, uint64_t wr_id
 )
 {
+  fprintf (
+    stderr, "[Rank %d] do_rdma_write called for destination %d\n",
+    (int) ucx_device->rank, dst
+  );
+
   if (dst < 0 || dst >= ucx_device->endpoints->tnc)
   {
     fprintf (stderr, "Invalid destination: %d\n", dst);
@@ -490,23 +545,33 @@ do_rdma_write (
 
   ucp_rkey_h rkey_handle;
   {
-    if (ucp_ep_rkey_unpack (ep, rkey->buffer, &rkey_handle) != UCS_OK)
+    if (ucp_ep_rkey_unpack (ep, rkey_buffer, &rkey_handle) != UCS_OK)
     {
       fprintf (stderr, "Could not unpack rkey handle\n");
       goto err;
     }
   }
 
+  struct cb_rdma_write_complete_user_data * user_data = 
+    malloc (sizeof (struct cb_rdma_write_complete_user_data));
+  /* TODO: Check for NULL */
+  *user_data = (struct cb_rdma_write_complete_user_data) {
+    .cq = cq,
+    .wr_id = dst
+  };
   ucs_status_ptr_t request = ucp_put_nbx (
     ep, local_addr, length, remote_addr, rkey_handle,
     & (ucp_request_param_t) {
-      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
-      .cb = { .send = cb_just_free_request }, /* TODO: not good, rkey handle must be destroyed as well */
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
+      .cb = { .send = cb_rdma_write_complete },
+      .user_data = user_data
     }
   );
   if (request == UCS_OK)
   {
-   ucp_rkey_destroy (rkey_handle); 
+    enqueue_send_completion (cq, wr_id);
+    free (user_data);
+    ucp_rkey_destroy (rkey_handle); 
   }
   else if (UCS_PTR_IS_ERR(request))
   {
@@ -517,6 +582,7 @@ do_rdma_write (
   return;
 
 err_put_nbx:
+  free (user_data);
   ucp_rkey_destroy (rkey_handle);
 err:
 }
@@ -524,8 +590,7 @@ err:
 ucx_device_status_t
 ucx_device_rdma_write (
   struct ucx_device * ucx_device, void * local_addr, int length, int dst,
-  struct gaspi_rc_mseg_rkey * rkey,
-  void * remote_addr
+  void * rkey_buffer, void * remote_addr, struct mpmc_queue * cq, uint64_t wr_id
 )
 {
   struct ucx_device_msg_rdma_write_data * d =
@@ -534,8 +599,10 @@ ucx_device_rdma_write (
     .local_addr = local_addr,
     .length = length,
     .dst = dst,
-    .rkey = rkey,
-    .remote_addr = remote_addr
+    .rkey_buffer = rkey_buffer,
+    .remote_addr = remote_addr,
+    .cq = cq,
+    .wr_id = wr_id
   };
   fprintf (stderr, "[Rank %d] Enqueuing RDMA WRITE\n", ucx_device->rank);
   return alf_enqueue (&ucx_device->queue, (struct alf_tag_payload_pair) {
@@ -605,7 +672,7 @@ do_run (void * args)
           
           fprintf (stderr, "Calling RDMA write\n");
           do_rdma_write (myself, p->local_addr, p->length, p->dst,
-            p->rkey, p->remote_addr);
+            p->rkey_buffer, (uintptr_t) p->remote_addr, p->cq, p->wr_id);
           free (p); /* TO DO: This is pretty bad. */
         }
         break;
@@ -762,7 +829,8 @@ ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t hos
     .ucp_worker = ucp_worker,
     .host_port = host_port,
     .queue = (struct mpmc_queue) {0},
-    .endpoints = ep_registry
+    .endpoints = ep_registry,
+    .scqGroups = (struct mpmc_queue) {0}
   };
 
   return UCX_DEVICE_OK;

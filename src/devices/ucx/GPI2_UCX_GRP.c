@@ -36,13 +36,77 @@ pgaspi_dev_post_group_write (gaspi_context_t * const gctx,
   fprintf (stderr, "[Rank %d] Post group write called\n", gctx->rank);
   gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
-  ucx_device_rdma_write (&ucx_device_ctx->ucx_device, local_addr, length, dst,
-    gctx->groups[group].rrcd[gctx->rank].mr[0], remote_addr);
+  if (ucx_device_rdma_write (
+    &ucx_device_ctx->ucx_device, local_addr, length, dst,
+    gctx->groups[group].rrcd[gctx->rank].mr[0].rkey_buffer, remote_addr,
+    &ucx_device_ctx->ucx_device.scqGroups, dst
+  ) != UCX_DEVICE_OK)
+  {
+    fprintf (stderr, "ucx_device_rdma_write failed\n");
+    goto err;
+  };
+
+  __atomic_add_fetch (&gctx->ne_count_grp, 1, __ATOMIC_RELAXED);
+  
+  return 0;
+
+err:
+  return -1;
+}
+
+static
+int
+ucx_poll_cq (
+  struct mpmc_queue * cq, uint32_t num_entries, struct ucx_wc wc[num_entries]
+)
+{
+  int i = 0;
+  while (1)
+  {
+    /* TODO: Check for errors. */
+    if (i >= num_entries) break;
+    struct alf_tag_payload_pair d;
+    if (!alf_dequeue (cq, &d)) break;
+    wc[i++] = * (struct ucx_wc *) d.payload;
+    free (d.payload);
+  }
+  return i;
 }
 
 /* TODO: number of elems to poll as arg */
 int
 pgaspi_dev_poll_groups (gaspi_context_t * const gctx)
 {
-  NOTIMPLEMENTED()
+  gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  
+  int ret = ucx_poll_cq (&ucx_dev_ctx->ucx_device.scqGroups, gctx->ne_count_grp,
+    ucx_dev_ctx->wc_grp_send);
+  
+  if (ret < 0)
+  {
+    gaspi_uint i;
+    for (i = 0; i < gctx->ne_count_grp; i++)
+    {
+      /* TODO: wc_grp_send is a [64] so we're basically assuming
+          that ne_count_grp will never exceed that */
+      if (ucx_dev_ctx->wc_grp_send[i].status != UCX_WC_SUCCESS)
+      {
+        //TODO: for now here because we need to identify the erroneous rank
+        // but has to go out of device
+        gctx->state_vec[GASPI_COLL_QP][ucx_dev_ctx->wc_grp_send[i].wr_id] =
+          GASPI_STATE_CORRUPT;
+      }
+  
+      GASPI_DEBUG_PRINT_ERROR(
+        "Failed request to %lu. Collectives queue might be broken",
+        ucx_dev_ctx->wc_grp_send[i].wr_id
+      );
+    }
+
+    return -1;
+  }
+  
+  __atomic_sub_fetch (&gctx->ne_count_grp, ret, __ATOMIC_RELAXED);
+
+  return ret;
 }

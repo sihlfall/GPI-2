@@ -357,8 +357,13 @@ pgaspi_segment_delete (const gaspi_segment_id_t segment_id)
   myrank_mseg->size = 0;
   myrank_mseg->notif_spc_size = 0;
   myrank_mseg->trans = 0;
+#ifdef GPI2_DEVICE_UCX
+  myrank_mseg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
+  myrank_mseg->mr[1] = (struct gaspi_rc_mseg_mr) {0};
+#else
   myrank_mseg->mr[0] = NULL;
   myrank_mseg->mr[1] = NULL;
+#endif
 #ifdef GPI2_DEVICE_IB
   myrank_mseg->rkey[0] = 0;
   myrank_mseg->rkey[1] = 0;

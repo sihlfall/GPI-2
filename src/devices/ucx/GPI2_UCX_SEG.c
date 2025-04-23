@@ -41,6 +41,9 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
   gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   struct ucx_device * ucx_device = &ucx_device_ctx->ucx_device;
 
+  seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
+  seg->mr[1] = (struct gaspi_rc_mseg_mr) {0};
+
   fprintf (stderr, "address: %llu, length: %llu\n", seg->data.buf, seg->size);
   ucp_mem_h data_memh;
   {
@@ -110,15 +113,19 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
       goto err_memh_pack_notif_spc_memh;
     }
   }
-  seg->mr[1] = notif_spc_memh;
-  seg->rkey[1] = (struct gaspi_rc_mseg_rkey) { 
-    .buffer = notif_spc_rkey_buffer, .buffer_size = notif_spc_rkey_buffer_size
+  seg->mr[1] = (struct gaspi_rc_mseg_mr) {
+    .addr = seg->notif_spc.buf,
+    .mem_h = notif_spc_memh,
+    .rkey_buffer = notif_spc_rkey_buffer,
+    .rkey_buffer_size = notif_spc_rkey_buffer_size
   };
 
 out:
-  seg->mr[0] = data_memh;
-  seg->rkey[0] = (struct gaspi_rc_mseg_rkey) { 
-    .buffer = data_rkey_buffer, .buffer_size = data_rkey_buffer_size
+  seg->mr[0] = (struct gaspi_rc_mseg_mr)  {
+    .addr = seg->data.buf,
+    .mem_h = data_memh,
+    .rkey_buffer = data_rkey_buffer,
+    .rkey_buffer_size = data_rkey_buffer_size
   };
 
   return 0;

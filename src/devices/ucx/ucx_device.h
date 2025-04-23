@@ -19,20 +19,14 @@
 #define UCX_DEVICE_OK 0
 #define UCX_DEVICE_ERR_UNSPECIFIED (-1)
 
+#define UCX_WC_SUCCESS 0
+
 typedef int ucx_device_status_t;
 
 struct ucx_device_msg_connect_data {
   char const * host;
   uint16_t port;
   gaspi_rank_t peer_rank;
-};
-
-struct ucx_device_msg_rdma_write_data {
-  void * local_addr;
-  int length;
-  int dst;
-  struct gaspi_rc_mseg_rkey * rkey;
-  void * remote_addr;
 };
 
 struct ucx_device;
@@ -66,6 +60,7 @@ struct ucx_device {
   ucp_context_h ucp_ctx;
   struct mpmc_queue queue;
   struct ucx_device_endpoints * endpoints;
+  struct mpmc_queue scqGroups;
 };
 
 ucx_device_status_t ucx_device_init (
@@ -80,7 +75,8 @@ ucx_device_status_t ucx_device_connect_to (
 );
 ucx_device_status_t ucx_device_rdma_write (
   struct ucx_device * ucx_device, void * local_addr, int length, int dst,
-  struct gaspi_rc_mseg_rkey * rkey, void * remote_addr
+  void * rkey_buffer, void * remote_addr,
+  struct mpmc_queue * cq, uint64_t wr_id
 );
 
 enum ucx_dev_am {
