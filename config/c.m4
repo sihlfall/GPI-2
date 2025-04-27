@@ -6,7 +6,7 @@ AC_DEFUN([ACX_C],[
 	case "${CCLOC}" in
 	     gcc|clang)
 	        AC_SUBST([NON_MPI_CC],${CCLOC})
-		CFLAGS+=" -std=gnu99 -Wall"
+		CFLAGS+=" -std=gnu11 -Wall"
 	  	;;
 	     mpicc)
 	        AS_IF([test "x${CCLOC}" = xmpicc],AC_SUBST([NON_MPI_CC],`mpicc --version | head -n 1 | { read first rest ; echo $first ; }`))
@@ -15,10 +15,10 @@ AC_DEFUN([ACX_C],[
 	     icc|icx|mpiicc)
 	     	AC_SUBST([NON_MPI_CC],icc)
 		AS_IF([test "x${CCLOC}" = xmpiicc],with_mpi=yes)
-	        CFLAGS+=" -std=gnu99 -Wall -Wno-implicit-function-declaration"
+	        CFLAGS+=" -std=gnu11 -Wall -Wno-implicit-function-declaration"
       		;;
     	     *)
-		CFLAGS+=" -std=c99"
+		CFLAGS+=" -std=c11"
        		;;
   	esac
         AS_IF([test "x${CCLOC}" = xmpicc -o "x${CCLOC}" = xmpiicc],[with_mpi=yes])

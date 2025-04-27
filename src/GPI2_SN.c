@@ -1144,6 +1144,88 @@ _gaspi_sn_group_connect (const gaspi_rank_t rank, const void *const arg)
     return GPI2_SN_ERROR;
   }
 
+#ifdef GPI2_DEVICE_UCX
+  _Alignas(struct gaspi_mseg_exch_info) unsigned char info_buffer[sizeof (struct gaspi_mseg_exch_info)];
+  struct gaspi_mseg_exch_info * info = &info_buffer[0];
+  fprintf(stderr, "Check 1\n");
+  ssize_t rret;
+  rret = gaspi_sn_readn (
+    gctx->sockfd[i], info, sizeof (struct gaspi_mseg_exch_info)
+  );
+  if (rret != sizeof (struct gaspi_mseg_exch_info))
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to read from %d (%ld %d %p %lu)",
+      i,
+      rret,
+      gctx->sockfd[i],
+      info,
+      sizeof (struct gaspi_mseg_exch_info)
+    );
+    return GPI2_SN_ERROR;
+  }
+  fprintf(stderr, "Check 2\n");
+  unsigned char * data_rkey_buffer = NULL;
+  if (info->data_rkey_buffer_size) {
+    fprintf(stderr, "Size: %lu\n", info->data_rkey_buffer_size);
+    data_rkey_buffer = malloc (info->data_rkey_buffer_size);
+    /* TODO: Check for NULL? */
+    rret = gaspi_sn_readn (
+      gctx->sockfd[i], data_rkey_buffer, info->data_rkey_buffer_size
+    );
+    if (rret != info->data_rkey_buffer_size)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to read from %d (%ld %d %p %lu)",
+        i,
+        rret,
+        gctx->sockfd[i],
+        data_rkey_buffer,
+        info->data_rkey_buffer_size
+      );
+      return GPI2_SN_ERROR;
+    }
+  }
+  fprintf(stderr, "Check 3\n");
+  unsigned char * notif_spc_rkey_buffer = NULL;
+  if (info->notif_spc_rkey_buffer_size) {
+    notif_spc_rkey_buffer = malloc (info->notif_spc_rkey_buffer_size);
+    /* TODO: Check for NULL ? */
+    rret = gaspi_sn_readn (
+      gctx->sockfd[i], notif_spc_rkey_buffer, info->notif_spc_rkey_buffer_size
+    );
+    if (rret != info->notif_spc_rkey_buffer_size)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to read from %d (%ld %d %p %lu)",
+        i,
+        rret,
+        gctx->sockfd[i],
+        notif_spc_rkey_buffer,
+        info->notif_spc_rkey_buffer_size
+      );
+      return GPI2_SN_ERROR;
+    }
+  }
+  fprintf(stderr, "Check 4\n");
+  group_to_commit->rrcd[i] = (gaspi_rc_mseg_t) {
+    .data.ptr = info->data_ptr,
+    .notif_spc.ptr = info->notif_spc_ptr,
+    .size = info->size,
+    .notif_spc_size = info->notif_spc_size,
+    .trans = info->trans,
+    .user_provided = info->user_provided,
+    .desc = info->desc,
+    .mr = {
+      {
+        .rkey_buffer = data_rkey_buffer,
+        .rkey_buffer_size = info->data_rkey_buffer_size
+      },
+      {
+        .rkey_buffer = notif_spc_rkey_buffer,
+        .rkey_buffer_size = info->notif_spc_rkey_buffer_size
+      }
+    }
+  };
+
+#else
   ssize_t rret =
     gaspi_sn_readn (gctx->sockfd[i], &group_to_commit->rrcd[i],
                     sizeof (gaspi_rc_mseg_t));
@@ -1157,6 +1239,7 @@ _gaspi_sn_group_connect (const gaspi_rank_t rank, const void *const arg)
                              sizeof (gaspi_rc_mseg_t));
     return GPI2_SN_ERROR;
   }
+#endif
 
   //TODO: what's the return value: int or some SN concrete?
   return 0;
@@ -1304,6 +1387,46 @@ gaspi_sn_add_fd_for_events (int fd, int eventsfd)
 
   return 0;
 }
+
+#ifdef GPI2_DEVICE_UCX
+
+struct mseg_exch_info_size_pair {
+  struct gaspi_mseg_exch_info * info;
+  size_t size;
+};
+
+/* TO DO: Maybe put elsewhere? */
+static
+struct mseg_exch_info_size_pair
+_gaspi_create_mseg_exch_info (gaspi_rc_mseg_t * mseg)
+{
+  size_t data_rkey_buffer_size = mseg->mr[0].rkey_buffer_size;
+  size_t notif_spc_rkey_buffer_size = mseg->mr[1].rkey_buffer_size;
+
+  size_t sz = sizeof (struct gaspi_mseg_exch_info)
+    + data_rkey_buffer_size + notif_spc_rkey_buffer_size;
+
+  struct gaspi_mseg_exch_info * info = malloc (sz);
+  /* TO DO: Check for NULL? */
+  *info = (struct gaspi_mseg_exch_info) {
+    .data_ptr = mseg->data.ptr,
+    .notif_spc_ptr = mseg->notif_spc.ptr,
+    .size = mseg->size,
+    .notif_spc_size = mseg->notif_spc_size,
+    .trans = mseg->trans,
+    .user_provided = mseg->user_provided,
+    .desc = mseg->desc,
+    .data_rkey_buffer_size = data_rkey_buffer_size,
+    .notif_spc_rkey_buffer_size = notif_spc_rkey_buffer_size
+  };
+  memcpy (&info->rkeys_buffer[0], mseg->mr[0].rkey_buffer, data_rkey_buffer_size);
+  memcpy (&info->rkeys_buffer[data_rkey_buffer_size], mseg->mr[1].rkey_buffer,
+    notif_spc_rkey_buffer_size);
+
+  return (struct mseg_exch_info_size_pair) { .info = info, .size = sz };
+}
+
+#endif
 
 void *
 gaspi_sn_backend (void* GASPI_UNUSED (args))
@@ -1567,8 +1690,18 @@ gaspi_sn_backend (void* GASPI_UNUSED (args))
                         GASPI_DELAY();
                       }
 
+#ifdef GPI2_DEVICE_UCX
+                      struct mseg_exch_info_size_pair p =
+                        _gaspi_create_mseg_exch_info (
+                          &grp_to_connect->rrcd[gctx->rank]
+                        );
+                      response = p.info;
+                      response_size = p.size;
+                      response_free = 1;
+#else
                       response = &(grp_to_connect->rrcd[gctx->rank]);
                       response_size = sizeof (gaspi_rc_mseg_t);
+#endif
                     }
                     else if (mgmt->cdh.op == GASPI_SN_SEG_REGISTER)
                     {
