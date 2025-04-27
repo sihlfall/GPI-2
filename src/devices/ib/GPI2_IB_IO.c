@@ -753,7 +753,7 @@ pgaspi_dev_read_list_notify (gaspi_context_t * const gctx,
 
   gaspi_ib_ctx *const ib_dev_ctx = (gaspi_ib_ctx *) gctx->device->ctx;
 
-  if (ibv_post_send (ib_dev_ctx->qpC[queue][rank], &swr[0], &bad_wr))
+  if (ibv_post_send (ib_dev_ctx->[queue][rank], &swr[0], &bad_wr))
   {
     return GASPI_ERROR;
   }

@@ -75,10 +75,18 @@ pgaspi_dev_comm_queue_create (gaspi_context_t const *const gctx,
 }
 
 int
-pgaspi_dev_comm_queue_is_valid (gaspi_context_t const *const gctx,
-                                const unsigned int id)
+pgaspi_dev_comm_queue_is_valid (
+  gaspi_context_t const * const gctx, const unsigned int id
+)
 {
-  NOTIMPLEMENTED()
+  gaspi_ucx_ctx const * ucx_dev_ctx = (gaspi_ucx_ctx const *) gctx->device->ctx;
+
+  if (!ucx_dev_ctx->qpC[id])
+  {
+    return GASPI_ERR_INV_QUEUE;
+  }
+
+  return 0;
 }
 
 int
@@ -90,6 +98,18 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
   gaspi_ucx_ctx * ucx_dev_ctx = calloc (1, sizeof (gaspi_ucx_ctx));
   if (!ucx_dev_ctx) goto err_alloc_gctx_device_ctx;
   gctx->device->ctx = ucx_dev_ctx;
+
+  for (unsigned int c = 0; c < gctx->config->queue_num; c++)
+  {
+    ucx_dev_ctx->qpC[c] =
+      (struct ucx_qp **) calloc (gctx->tnc, sizeof (struct ucx_qp *));
+    if (!ucx_dev_ctx->qpC[c])
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to allocate memory.");
+      goto err_alloc_gctx_qpC;
+    }
+  }
+
 
   if (ucx_device_init (
     &ucx_dev_ctx->ucx_device, gctx->rank, gctx->config->dev_config.params.tcp.port + gctx->rank
@@ -110,6 +130,9 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 err_device_start:
   ucx_device_cleanup (&ucx_dev_ctx->ucx_device);
 err_device_init:
+  /* TODO: should we deallocate the qpCs? */
+err_alloc_gctx_qpC:
+  /* TODO: should we deallocate the qpCs that were already initialized? */
   free (ucx_dev_ctx);
 err_alloc_gctx_device_ctx:
   free (gctx->device); gctx->device = NULL;

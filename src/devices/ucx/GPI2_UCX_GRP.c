@@ -68,7 +68,7 @@ ucx_poll_cq (
     struct alf_tag_payload_pair d;
     if (!alf_dequeue (cq, &d)) break;
     wc[i++] = * (struct ucx_wc *) d.payload;
-    free (d.payload);
+    free ((void *) d.payload);
   }
   return i;
 }
