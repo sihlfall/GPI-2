@@ -1,4 +1,7 @@
 #include "ucx_device.h"
+
+#include "ucx_qp.h"
+
 #include "GPI2_UCX.h"
 #include "ucp/api/ucp.h"
 
@@ -35,6 +38,10 @@ struct ucx_device_msg_rdma_write_data {
   struct mpmc_queue * cq;
   uint64_t wr_id;
 };  
+
+struct ucx_device_msg_qp_rdma_write_data {
+  struct ucx_qp * qp;
+};
 
 /* user_data associated with an endpoint;
  * since it contains the ucp_ep_h, it can be used for
@@ -611,6 +618,49 @@ ucx_device_rdma_write (
   }) ? UCX_DEVICE_OK : UCX_DEVICE_ERR_UNSPECIFIED;
 }
 
+static
+void
+do_qp_rdma_write (
+  struct ucx_device * ucx_device, struct ucx_qp * qp
+)
+{
+  struct alf_tag_payload_pair d;
+  if (!alf_dequeue (&qp->sq, &d))
+  {
+    fprintf (stderr, "Send queue empty\n");
+    return;
+  }
+
+  /* TODO: Continue here */
+  ucp_rkey_h rkey_handle;
+  {
+    if (ucp_ep_rkey_unpack (ep, rkey_buffer, &rkey_handle) != UCS_OK)
+    {
+      fprintf (stderr, "Could not unpack rkey handle\n");
+      goto err;
+    }
+  }
+
+
+}
+
+ucx_device_status_t
+ucx_device_qp_rdma_write (
+  struct ucx_device * ucx_device, struct ucx_qp * qp
+)
+{
+  struct ucx_device_msg_qp_rdma_write_data * d =
+    calloc (1, sizeof (struct ucx_device_msg_qp_rdma_write_data));
+  *d = (struct ucx_device_msg_qp_rdma_write_data) {
+    .qp = qp
+  };
+  fprintf (stderr, "[Rank %d] Enqueuing QP RDMA WRITE\n", ucx_device->rank);
+  return alf_enqueue (&ucx_device->queue, (struct alf_tag_payload_pair) {
+    .tag = UCX_DEV_MSG_QP_RDMA_WRITE,
+    .payload = (alf_payload_type) d
+  }) ? UCX_DEVICE_OK : UCX_DEVICE_ERR_UNSPECIFIED;
+}
+
 /* 
  * ************************************************************************************
  * Run (worker thread main function, incl. message loop)
@@ -673,6 +723,20 @@ do_run (void * args)
           fprintf (stderr, "Calling RDMA write\n");
           do_rdma_write (myself, p->local_addr, p->length, p->dst,
             p->rkey_buffer, (uintptr_t) p->remote_addr, p->cq, p->wr_id);
+          free (p); /* TO DO: This is pretty bad. */
+        }
+        break;
+      case UCX_DEV_MSG_QP_RDMA_WRITE:
+        {
+          struct ucx_device_msg_qp_rdma_write_data * p =
+            (struct ucx_device_msg_qp_rdma_write_data *) msg.payload;
+          if (!alf_dequeue (&myself->queue, &msg) || msg.tag != UCX_DEV_MSG_QP_RDMA_WRITE) {
+            fprintf (stderr, "Inconsistent queue, exiting\n");
+            goto err_inconsistent;
+          }
+          
+          fprintf (stderr, "Calling QP RDMA write\n");
+          do_qp_rdma_write (myself, p->qp);
           free (p); /* TO DO: This is pretty bad. */
         }
         break;

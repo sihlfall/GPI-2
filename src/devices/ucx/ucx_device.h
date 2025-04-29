@@ -15,6 +15,7 @@
 
 #define UCX_DEV_MSG_CONNECT 1
 #define UCX_DEV_MSG_RDMA_WRITE 2
+#define UCX_DEV_MSG_QP_RDMA_WRITE 3
 
 #define UCX_DEVICE_OK 0
 #define UCX_DEVICE_ERR_UNSPECIFIED (-1)
@@ -78,6 +79,13 @@ ucx_device_status_t ucx_device_rdma_write (
   void * rkey_buffer, void * remote_addr,
   struct mpmc_queue * cq, uint64_t wr_id
 );
+
+struct ucx_qp;
+
+ucx_device_status_t ucx_device_qp_rdma_write (
+  struct ucx_device * ucx_device, struct ucx_qp * qp
+);
+
 
 enum ucx_dev_am {
   UCX_DEV_HUHU = 1,
