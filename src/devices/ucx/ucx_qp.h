@@ -34,19 +34,32 @@ struct ucx_wc {
 };
 
 struct ucx_qp_init_attr {
-ucp_ep_h ep;
+  //ucp_ep_h ep;
+  int dst;
 };
 
 /* queue pair */
 struct ucx_qp {
-  ucp_ep_h ep;
+  //ucp_ep_h ep;
+  int dst; /* TODO: Separate ep later? */
   struct mpmc_queue sq;
-  struct ucx_wc * cq; /* ? */
+  //struct ucx_wc * cq; /* ? */
 };
+
+/* TODO: internal, move out of here */
+struct qp_queue_element {
+  uint64_t wr_id;
+  uint64_t num_sge;
+  union ucx_rdma_union wr;
+  struct ucx_sge sg_list [];
+};
+
+struct ucx_device;
 
 struct ucx_qp * ucx_qp_create (struct ucx_qp_init_attr * attr);
 void ucx_qp_post_send (
-  struct ucx_qp * qp, struct ucx_send_wr * wr, struct ucx_send_wr * bad_wr
+  struct ucx_device * ucx_device, struct ucx_qp * qp, struct ucx_send_wr * wr,
+  struct ucx_send_wr * bad_wr
 );
 
 #endif

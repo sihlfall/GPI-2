@@ -17,12 +17,27 @@
   } while (0);
 
 int
-pgaspi_dev_create_endpoint (gaspi_context_t const *const GASPI_UNUSED (gctx),
-                            const int GASPI_UNUSED (i),
-                            void **info,
-                            void **remote_info,
-                            size_t * info_size)
+pgaspi_dev_create_endpoint (
+  gaspi_context_t const * gctx , int i, void **info, void **remote_info,
+  size_t * info_size
+)
 {
+  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+
+  for (unsigned int c = 0; c < gctx->config->queue_num; c++)
+  {
+    struct ucx_qp * qp = ucx_qp_create (& (struct ucx_qp_init_attr) {
+      .dst = i
+    });
+    if (!qp)
+    {
+      fprintf (stderr, "Creating qp failed\n");
+      return -1;
+    }
+
+    ucx_device_ctx->qpC[c][i] = qp;
+  }
+
   *info = NULL;
   *remote_info = NULL;
   *info_size = 0;

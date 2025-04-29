@@ -618,23 +618,66 @@ ucx_device_rdma_write (
   }) ? UCX_DEVICE_OK : UCX_DEVICE_ERR_UNSPECIFIED;
 }
 
+struct cb_rdma_qp_flush_complete_user_data {
+  struct ucx_device * ucx_device;
+  struct ucx_qp * qp;
+};
+
+static
+void
+cb_reschedule_qp_rdma_write (void * request, ucs_status_t status, void * user_data)
+{
+  /* TODO: not good, rkey handle must be destroyed as well!!!! */
+
+  if (status != UCS_OK) goto err;
+  struct cb_rdma_qp_flush_complete_user_data * ud =
+    (struct cb_rdma_qp_flush_complete_user_data *) user_data;
+
+  ucx_device_qp_rdma_write (ud->ucx_device, ud->qp);
+  free (user_data);
+  ucp_request_free (request);
+  return;
+
+err:
+  fprintf (stderr, "qp rdma write resulted in an error\n");
+}
+
 static
 void
 do_qp_rdma_write (
   struct ucx_device * ucx_device, struct ucx_qp * qp
 )
 {
+  fprintf (stderr, "do_qp_rdma_write called\n");
   struct alf_tag_payload_pair d;
   if (!alf_dequeue (&qp->sq, &d))
   {
-    fprintf (stderr, "Send queue empty\n");
+    fprintf (stderr, "Info: Send queue empty\n");
     return;
   }
+  struct qp_queue_element * el = (struct qp_queue_element *) d.payload;
+  int dst = qp->dst;
+  struct ucx_device_ep_entry * ep_entry = &ucx_device->endpoints->ary[dst];
+  if (ep_entry->status != ucx_device_endpoint_ok)
+  {
+    fprintf (stderr, "Endpoint not connected (%d)\n", dst);
+    goto err;
+  }
+  ucp_ep_h ep = ep_entry->ep;
 
-  /* TODO: Continue here */
+  if (el->num_sge != 1)
+  {
+    fprintf (stderr, "Multiple sges not supported yet\n");
+    goto err;
+  }
+
+  fprintf (stderr, "Here!\n");
+
   ucp_rkey_h rkey_handle;
   {
-    if (ucp_ep_rkey_unpack (ep, rkey_buffer, &rkey_handle) != UCS_OK)
+    if (ucp_ep_rkey_unpack (
+      ep, el->wr.rdma.rkey_buffer, &rkey_handle
+    ) != UCS_OK)
     {
       fprintf (stderr, "Could not unpack rkey handle\n");
       goto err;
@@ -642,6 +685,52 @@ do_qp_rdma_write (
   }
 
 
+  ucs_status_ptr_t request_put = ucp_put_nbx (
+    ep, el->sg_list[0].addr, el->sg_list[0].length,
+    el->wr.rdma.remote_addr, rkey_handle,
+    & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
+      .cb = { .send = cb_just_free_request }
+    }
+  );
+  if (UCS_PTR_IS_ERR(request_put))
+  {
+    fprintf (stderr, "ucp_put_nbx (qp) resulted in an error\n");
+    goto err_put_nbx;
+  }
+
+  struct cb_rdma_qp_flush_complete_user_data * flush_user_data = calloc (1,
+    sizeof (struct cb_rdma_qp_flush_complete_user_data));
+  /* TODO: Check for NULL? */
+  *flush_user_data = (struct cb_rdma_qp_flush_complete_user_data) {
+    .ucx_device = ucx_device,
+    .qp = qp
+  };
+
+  ucs_status_ptr_t request_flush = ucp_ep_flush_nbx (
+    ep, &(ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
+      .cb = { .send = cb_reschedule_qp_rdma_write },
+      .user_data = flush_user_data
+    }
+  );
+  if (request_flush == UCS_OK)
+  {
+    ucx_device_qp_rdma_write (ucx_device, qp);
+  }
+  else if (UCS_PTR_IS_ERR (request_flush))
+  {
+    fprintf (stderr, "ucp_ep_flush (qp) resulted in an error\n");
+    goto err_flush_nbx;
+  }
+
+  return;
+
+err_flush_nbx:
+  free (flush_user_data);
+err_put_nbx:
+  ucp_rkey_destroy (rkey_handle);
+err:
 }
 
 ucx_device_status_t
@@ -741,6 +830,7 @@ do_run (void * args)
         }
         break;
       default:
+        fprintf (stderr, "Unknown message\n");
         break;
       }
     }

@@ -118,8 +118,6 @@ pgaspi_dev_write_notify (
   gaspi_queue_id_t queue
 )
 {
-  NOTIMPLEMENTED()
-
   if (gctx->ne_count_c[queue] + 2 > gctx->config->queue_size_max)
   {
     return GASPI_QUEUE_FULL;
@@ -150,7 +148,6 @@ pgaspi_dev_write_notify (
     .send_flags = IBV_SEND_SIGNALED;
     */
   };
-
 
   gaspi_notification_t * notification_ptr = (gaspi_notification_t *) (
     gctx->nsrc.notif_spc.buf + notification_id * sizeof (gaspi_notification_t)
@@ -183,10 +180,15 @@ pgaspi_dev_write_notify (
   gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   struct ucx_send_wr * bad_wr;
 
-  if (ucx_post_send (ucx_dev_ctx->qpC[queue][rank], &swr, &bad_wr))
+  // TODO: function should return status code, and then we should have an if here
+  ucx_qp_post_send (
+    &ucx_dev_ctx->ucx_device,
+    ucx_dev_ctx->qpC[queue][rank], &swr, &bad_wr);
+  /*
   {
     return GASPI_ERROR;
   }
+  */
 
   gctx->ne_count_c[queue] += 2;
 
