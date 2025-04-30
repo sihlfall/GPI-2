@@ -463,6 +463,14 @@ gaspi_segment_set (const gaspi_segment_descriptor_t snp)
   gctx->rrmd[snp.seg_id][snp.rank].rkey[0] = snp.rkey[0];
   gctx->rrmd[snp.seg_id][snp.rank].rkey[1] = snp.rkey[1];
 #endif
+#ifdef GPI2_DEVICE_UCX
+fprintf (stderr, "Setting rrmd for segment %d and rank %d\n", snp.seg_id, snp.rank);
+fprintf (stderr, "rkey_buffer_size is %lu\n", snp.data_rkey_buffer_size);
+  gctx->rrmd[snp.seg_id][snp.rank].mr[0].rkey_buffer_size = snp.data_rkey_buffer_size;
+  gctx->rrmd[snp.seg_id][snp.rank].mr[0].rkey_buffer = snp.data_rkey_buffer;
+  gctx->rrmd[snp.seg_id][snp.rank].mr[1].rkey_buffer_size = snp.notif_rkey_buffer_size;
+  gctx->rrmd[snp.seg_id][snp.rank].mr[1].rkey_buffer = snp.notif_rkey_buffer;
+#endif
 
   unlock_gaspi (&(gctx->mseg_lock));
   return 0;
@@ -502,6 +510,8 @@ pgaspi_segment_register_group (gaspi_context_t * const gctx,
   cdh.rkey[0] = myrank_mseg->rkey[0];
   cdh.rkey[1] = myrank_mseg->rkey[1];
 #endif
+
+  /* TODO: Handle UCX rkey_buffer here !!! */
 
   gaspi_segment_descriptor_t *result =
     calloc (gctx->groups[group].tnc, sizeof (gaspi_segment_descriptor_t));

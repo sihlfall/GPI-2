@@ -31,6 +31,12 @@ typedef struct
 #ifdef GPI2_DEVICE_IB
   int rkey[2];
 #endif
+#ifdef GPI2_DEVICE_UCX
+  size_t data_rkey_buffer_size;
+  size_t notif_rkey_buffer_size;
+  unsigned char * data_rkey_buffer;
+  unsigned char * notif_rkey_buffer;
+#endif
 } gaspi_segment_descriptor_t;
 
 

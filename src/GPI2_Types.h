@@ -52,19 +52,6 @@ struct gaspi_rc_mseg_mr {
   void * rkey_buffer;
   size_t rkey_buffer_size;
 };
-
-struct gaspi_mseg_exch_info {
-  void * data_ptr;
-  void * notif_spc_ptr;
-  unsigned long size;
-  size_t notif_spc_size;
-  int trans;
-  int user_provided;
-  gaspi_memory_description_t desc;
-  size_t data_rkey_buffer_size;
-  size_t notif_spc_rkey_buffer_size;
-  unsigned char rkeys_buffer[];
-};
 #endif
 
 typedef struct

@@ -180,6 +180,7 @@ pgaspi_dev_write_notify (
   gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   struct ucx_send_wr * bad_wr;
 
+  fprintf (stderr, "Write request (rkey buffer size): %d\n", swr.wr.rdma.rkey_buffer_size);
   // TODO: function should return status code, and then we should have an if here
   ucx_qp_post_send (
     &ucx_dev_ctx->ucx_device,

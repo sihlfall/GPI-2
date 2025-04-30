@@ -58,23 +58,46 @@ enum
   GPI2_SN_ERROR = -1
 };
 
-typedef struct
+struct gaspi_cd_header
 {
   int op, op_len, rank, tnc;
   int ret, seg_id;
   unsigned long addr, size, notif_addr;
-
+#ifdef GPI2_DEVICE_UCX
+  uint64_t data_rkey_buffer_size;
+  uint64_t notif_rkey_buffer_size;
+#endif
 #ifdef GPI2_DEVICE_IB
   int rkey[2];
 #endif
-} gaspi_cd_header;
+};
 
-typedef struct
+#ifdef GPI2_DEVICE_UCX
+struct gaspi_segment_register_cd_header
+{
+  struct gaspi_cd_header cdh;
+  unsigned char rkeys_buffer [];
+};
+
+struct gaspi_mseg_exch_info {
+  void * data_ptr;
+  void * notif_spc_ptr;
+  unsigned long size;
+  size_t notif_spc_size;
+  int trans;
+  int user_provided;
+  gaspi_memory_description_t desc;
+  size_t data_rkey_buffer_size;
+  size_t notif_spc_rkey_buffer_size;
+  unsigned char rkeys_buffer[];
+};
+#endif
+
+struct gaspi_mgmt_header
 {
   int fd, op, rank, blen, bdone;
-  gaspi_cd_header cdh;
-} gaspi_mgmt_header;
-
+  struct gaspi_cd_header cdh;
+};
 
 int
 gaspi_sn_set_blocking (const int sock)
@@ -436,9 +459,9 @@ gaspi_sn_recv_topology (gaspi_context_t * const gctx,
     return nsock;
   }
 
-  gaspi_cd_header cdh;
+  struct gaspi_cd_header cdh;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   /* Read the header */
   if (gaspi_sn_readn (nsock, &cdh, sizeof (cdh)) != sizeof (cdh))
@@ -503,9 +526,9 @@ gaspi_sn_send_topology (gaspi_context_t * const gctx, const int i,
     return GPI2_SN_ERROR;
   }
 
-  gaspi_cd_header cdh;
+  struct gaspi_cd_header cdh;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   cdh.op_len = gctx->tnc * 65;  //TODO: 65 is magic
   cdh.op = GASPI_SN_TOPOLOGY;
@@ -513,7 +536,7 @@ gaspi_sn_send_topology (gaspi_context_t * const gctx, const int i,
   cdh.tnc = gctx->tnc;
 
   int retval = 0;
-  ssize_t len = sizeof (gaspi_cd_header);
+  ssize_t len = sizeof (struct gaspi_cd_header);
   void *ptr = &cdh;
   int sockfd = gctx->sockfd[i];
 
@@ -635,7 +658,12 @@ gaspi_sn_broadcast_topology (gaspi_context_t * const gctx,
 }
 
 static int
-gaspi_sn_segment_register (const gaspi_cd_header snp)
+gaspi_sn_segment_register (
+  const struct gaspi_cd_header snp
+#ifdef GPI2_DEVICE_UCX
+  , unsigned char * rkeys_buf
+#endif
+)
 {
   gaspi_segment_descriptor_t seg_desc;
 
@@ -649,6 +677,23 @@ gaspi_sn_segment_register (const gaspi_cd_header snp)
 #ifdef GPI2_DEVICE_IB
   seg_desc.rkey[0] = snp.rkey[0];
   seg_desc.rkey[1] = snp.rkey[1];
+#endif
+#ifdef GPI2_DEVICE_UCX
+  seg_desc.data_rkey_buffer_size = snp.data_rkey_buffer_size;
+  seg_desc.notif_rkey_buffer_size = snp.notif_rkey_buffer_size;
+  seg_desc.data_rkey_buffer = NULL;
+  seg_desc.notif_rkey_buffer = NULL;
+  if (seg_desc.data_rkey_buffer_size)
+  {
+    seg_desc.data_rkey_buffer = malloc (seg_desc.data_rkey_buffer_size);
+    memcpy (seg_desc.data_rkey_buffer, &rkeys_buf[0], seg_desc.data_rkey_buffer_size);
+  }
+  if (seg_desc.notif_rkey_buffer_size)
+  {
+    seg_desc.notif_rkey_buffer = malloc (seg_desc.notif_rkey_buffer_size);
+    memcpy (seg_desc.notif_rkey_buffer,
+      &rkeys_buf[seg_desc.data_rkey_buffer_size], seg_desc.notif_rkey_buffer_size);
+  }
 #endif
 
   return gaspi_segment_set (seg_desc);
@@ -707,17 +752,17 @@ gaspi_sn_send_recv_cmd (const gaspi_rank_t target_rank,
 
   const int sockfd = gctx->sockfd[(int) target_rank];
 
-  gaspi_cd_header cdh;
+  struct gaspi_cd_header cdh;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   cdh.op_len = (int) send_size;
   cdh.op = op;
   cdh.rank = gctx->rank;
 
-  ssize_t wret = gaspi_sn_writen (sockfd, &cdh, sizeof (gaspi_cd_header));
+  ssize_t wret = gaspi_sn_writen (sockfd, &cdh, sizeof (struct gaspi_cd_header));
 
-  if (wret != sizeof (gaspi_cd_header))
+  if (wret != sizeof (struct gaspi_cd_header))
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u", target_rank);
     return GPI2_SN_ERROR;
@@ -781,9 +826,9 @@ static inline int
 _gaspi_sn_single_command (const gaspi_rank_t rank, const enum gaspi_sn_ops op)
 {
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
-  gaspi_cd_header cdh;
+  struct gaspi_cd_header cdh;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   cdh.op_len = 1;
   cdh.op = op;
@@ -791,14 +836,14 @@ _gaspi_sn_single_command (const gaspi_rank_t rank, const enum gaspi_sn_ops op)
   cdh.tnc = gctx->tnc;
 
   ssize_t ret =
-    gaspi_sn_writen (gctx->sockfd[rank], &cdh, sizeof (gaspi_cd_header));
+    gaspi_sn_writen (gctx->sockfd[rank], &cdh, sizeof (struct gaspi_cd_header));
 
-  if (ret != sizeof (gaspi_cd_header))
+  if (ret != sizeof (struct gaspi_cd_header))
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u  (%d %p %lu)",
                              rank,
                              gctx->sockfd[rank], &cdh,
-                             sizeof (gaspi_cd_header));
+                             sizeof (struct gaspi_cd_header));
     return GPI2_SN_ERROR;
   }
 
@@ -952,6 +997,42 @@ gaspi_sn_allgather (gaspi_context_t const *const gctx,
   return 0;
 }
 
+#ifdef GPI2_DEVICE_UCX
+struct gaspi_segment_register_cd_header_size_pair {
+  struct gaspi_segment_register_cd_header * h;
+  size_t size;
+};
+
+static
+struct gaspi_segment_register_cd_header_size_pair
+create_segment_register_cd_header (gaspi_rc_mseg_t * segment, int segment_id, int rank)
+{
+  size_t data_rkey_buffer_size = segment->mr[0].rkey_buffer_size;
+  size_t notif_rkey_buffer_size = segment->mr[1].rkey_buffer_size;
+  size_t struct_size = sizeof (struct gaspi_segment_register_cd_header) +
+    data_rkey_buffer_size + notif_rkey_buffer_size;
+  struct gaspi_segment_register_cd_header * h = calloc (1, struct_size);
+  h->cdh = (struct gaspi_cd_header) {
+    .op_len = 0,               /* in-place */
+    .op = GASPI_SN_SEG_REGISTER,
+    .rank = rank,
+    .seg_id = segment_id,
+    .addr = segment->data.addr,
+    .notif_addr = segment->notif_spc.addr,
+    .size = segment->size,
+    .data_rkey_buffer_size = data_rkey_buffer_size,
+    .notif_rkey_buffer_size = notif_rkey_buffer_size  
+  };
+  memcpy (&h->rkeys_buffer[0], segment->mr[0].rkey_buffer, data_rkey_buffer_size);
+  memcpy (&h->rkeys_buffer[data_rkey_buffer_size],
+    segment->mr[1].rkey_buffer, notif_rkey_buffer_size
+  );
+  return (struct gaspi_segment_register_cd_header_size_pair) {
+    .h = h, .size = struct_size
+  };
+}
+#endif
+
 static inline int
 _gaspi_sn_segment_register_command (const gaspi_rank_t rank,
                                     const void *const arg)
@@ -959,10 +1040,31 @@ _gaspi_sn_segment_register_command (const gaspi_rank_t rank,
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
   const gaspi_segment_id_t segment_id = *(gaspi_segment_id_t *) arg;
 
-  //TODO: move code to own function (e.g. create_segment_registration_descriptor)
-  gaspi_cd_header cdh;
+#ifdef GPI2_DEVICE_UCX
+  {
+    gaspi_rc_mseg_t * segment = &gctx->rrmd[segment_id][gctx->rank];
+    struct gaspi_segment_register_cd_header_size_pair p =
+      create_segment_register_cd_header (segment, segment_id, gctx->rank);
+    struct gaspi_segment_register_cd_header * h = p.h;
+    uint64_t hsz = p.size;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+    ssize_t ret = gaspi_sn_writen (gctx->sockfd[rank], h, hsz);
+    if (ret != hsz)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to write to rank %u (args: %d %p %lu)",
+                              rank,
+                              gctx->sockfd[rank],
+                              h, hsz);
+      free (h);
+      return GPI2_SN_ERROR;
+    }
+    free (h);
+  }
+#else
+  //TODO: move code to own function (e.g. create_segment_registration_descriptor)
+  struct gaspi_cd_header cdh;
+
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   cdh.op_len = 0;               /* in-place */
   cdh.op = GASPI_SN_SEG_REGISTER;
@@ -979,15 +1081,16 @@ _gaspi_sn_segment_register_command (const gaspi_rank_t rank,
 
   fprintf("sockfd: %d\n", gctx->sockfd[rank]);
   ssize_t ret =
-    gaspi_sn_writen (gctx->sockfd[rank], &cdh, sizeof (gaspi_cd_header));
-  if (ret != sizeof (gaspi_cd_header))
+    gaspi_sn_writen (gctx->sockfd[rank], &cdh, sizeof (struct gaspi_cd_header));
+  if (ret != sizeof (struct gaspi_cd_header))
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to rank %u (args: %d %p %lu)",
                              rank,
                              gctx->sockfd[rank],
-                             &cdh, sizeof (gaspi_cd_header));
+                             &cdh, sizeof (struct gaspi_cd_header));
     return GPI2_SN_ERROR;
   }
+#endif
 
   int result = 1;
   ssize_t rret = gaspi_sn_readn (gctx->sockfd[rank], &result, sizeof (int));
@@ -1013,22 +1116,22 @@ _gaspi_sn_ping_command (const gaspi_rank_t rank)
 {
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
 
-  gaspi_cd_header cdh;
+  struct gaspi_cd_header cdh;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   cdh.op_len = 0;               /* in-place */
   cdh.op = GASPI_SN_PROC_PING;
   cdh.rank = gctx->rank;
 
   ssize_t ret =
-    gaspi_sn_writen (gctx->sockfd[rank], &cdh, sizeof (gaspi_cd_header));
-  if (ret != sizeof (gaspi_cd_header))
+    gaspi_sn_writen (gctx->sockfd[rank], &cdh, sizeof (struct gaspi_cd_header));
+  if (ret != sizeof (struct gaspi_cd_header))
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to rank %u (args: %d %p %lu)",
                              rank,
                              gctx->sockfd[rank],
-                             &cdh, sizeof (gaspi_cd_header));
+                             &cdh, sizeof (struct gaspi_cd_header));
     return GPI2_SN_ERROR;
   }
 
@@ -1061,9 +1164,9 @@ _gaspi_sn_group_check (const gaspi_rank_t rank,
 
   ftime (&t0);
 
-  gaspi_cd_header cdh;
+  struct gaspi_cd_header cdh;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   cdh.op_len = sizeof (*gb);
   cdh.op = GASPI_SN_GRP_CHECK;
@@ -1076,13 +1179,13 @@ _gaspi_sn_group_check (const gaspi_rank_t rank,
     memset (&rem_gb, 0, sizeof (rem_gb));
 
     ssize_t ret =
-      gaspi_sn_writen (gctx->sockfd[i], &cdh, sizeof (gaspi_cd_header));
-    if (ret != sizeof (gaspi_cd_header))
+      gaspi_sn_writen (gctx->sockfd[i], &cdh, sizeof (struct gaspi_cd_header));
+    if (ret != sizeof (struct gaspi_cd_header))
     {
       GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u (%d %p %lu)",
                                rank,
                                gctx->sockfd[i], &cdh,
-                               sizeof (gaspi_cd_header));
+                               sizeof (struct gaspi_cd_header));
       return 1;
     }
 
@@ -1142,9 +1245,9 @@ _gaspi_sn_group_connect (const gaspi_rank_t rank, const void *const arg)
   const gaspi_group_t group = *(gaspi_group_t *) arg;
   const gaspi_group_ctx_t *const group_to_commit = &(gctx->groups[group]);
 
-  gaspi_cd_header cdh;
+  struct gaspi_cd_header cdh;
 
-  memset (&cdh, 0, sizeof (gaspi_cd_header));
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
 
   cdh.op_len = sizeof (gaspi_rc_mseg_t);
   cdh.op = GASPI_SN_GRP_CONNECT;
@@ -1152,13 +1255,13 @@ _gaspi_sn_group_connect (const gaspi_rank_t rank, const void *const arg)
   cdh.ret = group;
 
   ssize_t ret =
-    gaspi_sn_writen (gctx->sockfd[i], &cdh, sizeof (gaspi_cd_header));
-  if (ret != sizeof (gaspi_cd_header))
+    gaspi_sn_writen (gctx->sockfd[i], &cdh, sizeof (struct gaspi_cd_header));
+  if (ret != sizeof (struct gaspi_cd_header))
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u (%ld %d %p %lu)",
                              i,
                              ret,
-                             gctx->sockfd[i], &cdh, sizeof (gaspi_cd_header));
+                             gctx->sockfd[i], &cdh, sizeof (struct gaspi_cd_header));
     return GPI2_SN_ERROR;
   }
 
@@ -1383,9 +1486,9 @@ static int
 gaspi_sn_add_fd_for_events (int fd, int eventsfd)
 {
   struct epoll_event ev;
-  gaspi_mgmt_header *ev_mgmt;
+  struct gaspi_mgmt_header *ev_mgmt;
 
-  ev.data.ptr = malloc (sizeof (gaspi_mgmt_header));
+  ev.data.ptr = malloc (sizeof (struct gaspi_mgmt_header));
   if (ev.data.ptr == NULL)
   {
     return GPI2_SN_ERROR;
@@ -1393,7 +1496,7 @@ gaspi_sn_add_fd_for_events (int fd, int eventsfd)
 
   ev_mgmt = ev.data.ptr;
   ev_mgmt->fd = fd;
-  ev_mgmt->blen = sizeof (gaspi_cd_header);
+  ev_mgmt->blen = sizeof (struct gaspi_cd_header);
   ev_mgmt->bdone = 0;
   ev_mgmt->op = GASPI_SN_HEADER;
   ev.events = EPOLLIN;
@@ -1451,7 +1554,7 @@ gaspi_sn_backend (void* GASPI_UNUSED (args))
 {
   int esock, lsock, n;
   struct epoll_event *ret_ev;
-  gaspi_mgmt_header *mgmt;
+  struct gaspi_mgmt_header *mgmt;
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
   
   signal (SIGSTKFLT, gaspi_sn_cleanup);
@@ -1723,7 +1826,27 @@ gaspi_sn_backend (void* GASPI_UNUSED (args))
                     }
                     else if (mgmt->cdh.op == GASPI_SN_SEG_REGISTER)
                     {
+#ifdef GPI2_DEVICE_UCX
+                      size_t data_rkey_buffer_size = mgmt->cdh.data_rkey_buffer_size;
+                      size_t notif_rkey_buffer_size = mgmt->cdh.notif_rkey_buffer_size;
+                      size_t total_size = data_rkey_buffer_size + notif_rkey_buffer_size;
+                      unsigned char * buf = malloc(total_size);
+                      ssize_t ret = gaspi_sn_readn (mgmt->fd, buf, total_size);
+                      if (ret < 0 || ret != total_size)
+                      {
+                        fprintf (stderr, "Reading rkey buffer failed\n");
+                        GASPI_DEBUG_PRINT_ERROR (
+                          "Reading rkey failed from rank %u\n", mgmt->cdh.rank
+                        );
+                        free (buf);
+                        io_err = 1;
+                        break;
+                      }
+                      ack = gaspi_sn_segment_register (mgmt->cdh, buf);
+                      free (buf);
+#else
                       ack = gaspi_sn_segment_register (mgmt->cdh);
+#endif
                     }
                     else if (mgmt->cdh.op == GASPI_SN_CONNECT)
                     {
@@ -1834,7 +1957,7 @@ gaspi_sn_backend (void* GASPI_UNUSED (args))
                 }
 
                 /* IMPORTANT not to forget the event reset accordingly */
-                GASPI_SN_RESET_EVENT (mgmt, sizeof (gaspi_cd_header),
+                GASPI_SN_RESET_EVENT (mgmt, sizeof (struct gaspi_cd_header),
                                       GASPI_SN_HEADER);
 
                 break;
