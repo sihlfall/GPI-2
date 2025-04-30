@@ -28,6 +28,10 @@ GPI2.pc
 tests/bin/
 *~
 autom4te.cache/
+docs/Doxyfile
+src/*.mod
+tests/tests/fortran/*.mod
+
 
 
 
