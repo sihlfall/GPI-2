@@ -45,23 +45,6 @@ enum gaspi_sn_status
   GASPI_SN_STATE_ERROR
 };
 
-typedef struct
-{
-  int op, op_len, rank, tnc;
-  int ret, seg_id;
-  unsigned long addr, size, notif_addr;
-
-#ifdef GPI2_DEVICE_IB
-  int rkey[2];
-#endif
-} gaspi_cd_header;
-
-typedef struct
-{
-  int fd, op, rank, blen, bdone;
-  gaspi_cd_header cdh;
-} gaspi_mgmt_header;
-
 extern volatile enum gaspi_sn_status gaspi_sn_status;
 extern volatile gaspi_return_t gaspi_sn_err;
 

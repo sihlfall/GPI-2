@@ -58,6 +58,24 @@ enum
   GPI2_SN_ERROR = -1
 };
 
+typedef struct
+{
+  int op, op_len, rank, tnc;
+  int ret, seg_id;
+  unsigned long addr, size, notif_addr;
+
+#ifdef GPI2_DEVICE_IB
+  int rkey[2];
+#endif
+} gaspi_cd_header;
+
+typedef struct
+{
+  int fd, op, rank, blen, bdone;
+  gaspi_cd_header cdh;
+} gaspi_mgmt_header;
+
+
 int
 gaspi_sn_set_blocking (const int sock)
 {
