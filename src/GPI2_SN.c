@@ -686,6 +686,7 @@ gaspi_sn_segment_register (
   if (seg_desc.data_rkey_buffer_size)
   {
     seg_desc.data_rkey_buffer = malloc (seg_desc.data_rkey_buffer_size);
+    fprintf (stderr, "Allocated data_rkey_buffer: %p\n", seg_desc.data_rkey_buffer);
     memcpy (seg_desc.data_rkey_buffer, &rkeys_buf[0], seg_desc.data_rkey_buffer_size);
   }
   if (seg_desc.notif_rkey_buffer_size)
@@ -1023,6 +1024,7 @@ create_segment_register_cd_header (gaspi_rc_mseg_t * segment, int segment_id, in
     .data_rkey_buffer_size = data_rkey_buffer_size,
     .notif_rkey_buffer_size = notif_rkey_buffer_size  
   };
+  fprintf ("Creating seg reg cd header with rkey_buffer %p\n", segment->mr[0].rkey_buffer);
   memcpy (&h->rkeys_buffer[0], segment->mr[0].rkey_buffer, data_rkey_buffer_size);
   memcpy (&h->rkeys_buffer[data_rkey_buffer_size],
     segment->mr[1].rkey_buffer, notif_rkey_buffer_size

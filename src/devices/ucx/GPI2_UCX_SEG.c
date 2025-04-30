@@ -70,7 +70,7 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
   void * data_rkey_buffer; size_t data_rkey_buffer_size;
   {
     if (ucp_rkey_pack (
-      ucx_device->ucp_ctx, data_memh,&data_rkey_buffer, &data_rkey_buffer_size
+      ucx_device->ucp_ctx, data_memh, &data_rkey_buffer, &data_rkey_buffer_size
     ) != UCS_OK)
     {
       fprintf (stderr, "Could not obtain remote handle\n");
@@ -128,6 +128,7 @@ out:
     .rkey_buffer_size = data_rkey_buffer_size
   };
 
+  fprintf (stderr, "[Rank %d] Registered rkey buffer: %p\n", gctx->rank, data_rkey_buffer);
   return 0;
 
 err_memh_pack_notif_spc_memh:

@@ -149,6 +149,7 @@ pgaspi_dev_write_notify (
     */
   };
 
+  fprintf (stderr, "Rkey buffer ptr: %p\n", gctx->rrmd[segment_id_remote][rank].mr[0].rkey_buffer);
   gaspi_notification_t * notification_ptr = (gaspi_notification_t *) (
     gctx->nsrc.notif_spc.buf + notification_id * sizeof (gaspi_notification_t)
   );

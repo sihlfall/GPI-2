@@ -671,7 +671,7 @@ do_qp_rdma_write (
     goto err;
   }
 
-  fprintf (stderr, "Here!\n");
+  fprintf (stderr, "Here! Rkey buffer: %p\n", el->wr.rdma.rkey_buffer);
 
   ucp_rkey_h rkey_handle;
   {
@@ -683,6 +683,8 @@ do_qp_rdma_write (
       goto err;
     }
   }
+
+  fprintf (stderr, "And here!\n");
 
 
   ucs_status_ptr_t request_put = ucp_put_nbx (
