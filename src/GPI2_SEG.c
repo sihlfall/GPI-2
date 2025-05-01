@@ -476,6 +476,56 @@ fprintf (stderr, "rkey_buffer_size is %lu\n", snp.data_rkey_buffer_size);
   return 0;
 }
 
+#ifdef GPI2_DEVICE_UCX
+
+static
+size_t
+segment_descriptor_get_dynamic_data_size (void * rec)
+{
+  gaspi_segment_descriptor_t * sd = (gaspi_segment_descriptor_t *) rec;
+  return sd->data_rkey_buffer_size + sd->notif_rkey_buffer_size;
+}
+
+static
+void
+segment_descriptor_pack_dynamic_data (unsigned char * buf, void * rec)
+{
+  gaspi_segment_descriptor_t * sd = (gaspi_segment_descriptor_t *) rec;
+  size_t dsz = sd->data_rkey_buffer_size;
+  size_t nsz = sd->notif_rkey_buffer_size;
+  if (dsz) memcpy (buf, sd->data_rkey_buffer, dsz);
+  if (nsz) memcpy (buf + dsz, sd->notif_rkey_buffer, nsz);
+}
+
+static
+void
+segment_descriptor_unpack_dynamic_data (void * rec, unsigned char * buf)
+{
+  gaspi_segment_descriptor_t * sd = (gaspi_segment_descriptor_t *) rec;
+  size_t dsz = sd->data_rkey_buffer_size;
+  size_t nsz = sd->notif_rkey_buffer_size;
+  if (dsz)
+  {
+    sd->data_rkey_buffer = calloc (dsz, sizeof (unsigned char));
+    memcpy (sd->data_rkey_buffer, buf, dsz);
+  }
+  else
+  {
+    sd->data_rkey_buffer = NULL;
+  }
+  if (nsz)
+  {
+    sd->notif_rkey_buffer = calloc (nsz, sizeof (unsigned char));
+    memcpy (sd->notif_rkey_buffer, buf + dsz, nsz);
+  }
+  else
+  {
+    sd->notif_rkey_buffer = NULL;
+  }
+}
+
+#endif
+
 static gaspi_return_t
 pgaspi_segment_register_group (gaspi_context_t * const gctx,
                                const gaspi_segment_id_t segment_id,
@@ -527,9 +577,20 @@ pgaspi_segment_register_group (gaspi_context_t * const gctx,
     return GASPI_ERR_MEMALLOC;
   }
 
-  if (gaspi_sn_allgather
+#ifdef GPI2_DEVICE_UCX
+  if (gaspi_sn_allgather_dynamic (
+    gctx, &cdh, result, sizeof (gaspi_segment_descriptor_t), group, timeout_ms,
+    segment_descriptor_get_dynamic_data_size,
+    segment_descriptor_pack_dynamic_data,
+    segment_descriptor_unpack_dynamic_data
+  ))
+#else
+  if (
+    gaspi_sn_allgather
       (gctx, &cdh, result, sizeof (gaspi_segment_descriptor_t), group,
-       timeout_ms) != 0)
+       timeout_ms) != 0
+  )
+#endif
   {
     free (result);
     unlock_gaspi (&(gctx->ctx_lock));

@@ -52,6 +52,20 @@ gaspi_return_t
 gaspi_sn_broadcast_topology (gaspi_context_t * const ctx,
                              const gaspi_timeout_t timeout_ms);
 
+
+#ifdef GPI2_DEVICE_UCX
+int
+gaspi_sn_allgather_dynamic (
+  gaspi_context_t const *const gctx,
+  void * src,
+  void * recv, size_t size,
+  gaspi_group_t group, gaspi_timeout_t timeout_ms,
+  size_t (*get_dynamic_data_size) (void * rec),
+  void (*pack_dynamic_data) (unsigned char * buf, void * rec),
+  void (*unpack_dynamic_data) (void * rec, unsigned char * buf)
+);
+#endif
+
 int
 gaspi_sn_allgather (gaspi_context_t const *const gctx,
                     void const *const src,

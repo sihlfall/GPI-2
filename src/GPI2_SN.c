@@ -26,6 +26,7 @@ along with GPI-2. If not, see <http://www.gnu.org/licenses/>.
 #include <sys/socket.h>
 #include <sys/timeb.h>
 #include <sys/epoll.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -853,6 +854,227 @@ _gaspi_sn_single_command (const gaspi_rank_t rank, const enum gaspi_sn_ops op)
   return 0;
 }
 
+#ifdef GPI2_DEVICE_UCX
+
+static inline
+void
+ensure_buffer_size (
+  unsigned char ** buffer, size_t * buffer_size,
+  size_t required_size,
+  size_t stack_buffer_size,
+  _Bool preserve
+)
+{
+  if (required_size <= *buffer_size) return;
+
+  size_t old_buffer_size = *buffer_size;
+  size_t new_buffer_size = old_buffer_size;
+  do { new_buffer_size *= 2u; } while (required_size > new_buffer_size);
+  if (old_buffer_size == stack_buffer_size)
+  {
+    unsigned char * old_buffer = *buffer;
+    unsigned char * new_buffer = malloc (new_buffer_size);
+    if (preserve) memcpy (new_buffer, old_buffer, old_buffer_size);
+    *buffer = new_buffer;
+    *buffer_size = new_buffer_size;
+  }
+  else
+  {
+    unsigned char * old_buffer = *buffer;
+    unsigned char * new_buffer = realloc (old_buffer, new_buffer_size);
+    *buffer = new_buffer;
+    *buffer_size = new_buffer_size;
+  }
+}
+
+static inline
+void
+free_buffer (unsigned char * buffer, size_t buffer_size, size_t stack_buffer_size)
+{
+  if (buffer_size != stack_buffer_size) free (buffer);
+}
+
+int
+gaspi_sn_allgather_dynamic (
+  gaspi_context_t const *const gctx,
+  void * src,
+  void * recv, size_t size,
+  gaspi_group_t group, gaspi_timeout_t timeout_ms,
+  size_t (*get_dynamic_data_size) (void * rec),
+  void (*pack_dynamic_data) (unsigned char * buf, void * rec),
+  void (*unpack_dynamic_data) (void * rec, unsigned char * buf)
+)
+{
+  enum { stack_buffer_size = 1024 };
+  _Alignas(max_align_t) unsigned char stack_buffer [stack_buffer_size];
+  size_t buffer_size = stack_buffer_size;
+  unsigned char * buffer = stack_buffer;
+
+  int left_sock = -1, right_sock = -1;
+
+  const gaspi_group_ctx_t *grp_ctx = &(gctx->groups[group]);
+
+  const int right_rank_in_group =
+    (grp_ctx->rank + grp_ctx->tnc + 1) % grp_ctx->tnc;
+  const int right_rank = grp_ctx->rank_grp[right_rank_in_group];
+
+  const int right_rank_port_offset = gctx->poff[right_rank];
+  const int my_rank_port_offset = gctx->poff[gctx->rank];
+
+ /* TODO: fixed port numbers */
+  const int port_to_wait = 23333 + my_rank_port_offset;
+  const int port_to_connect = 23333 + right_rank_port_offset;
+
+  /* Connect in a ring */
+  /* If odd number of ranks, the last rank must connect and then accept */
+  if ((grp_ctx->rank % 2) == 0
+      && !((grp_ctx->rank == grp_ctx->tnc - 1) && (grp_ctx->tnc % 2 != 0)))
+  {
+    left_sock = _gaspi_sn_wait_connection (port_to_wait, timeout_ms);
+    if (left_sock < 0)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to accept connection on %d(%d).",
+                               port_to_wait, my_rank_port_offset);
+      return GPI2_SN_ERROR;
+    }
+
+    right_sock = gaspi_sn_connect2port (pgaspi_gethostname (right_rank),
+                                        port_to_connect, timeout_ms);
+    if (right_sock < 0)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to connect to rank %u on %d (%d).",
+                               right_rank, port_to_connect,
+                               right_rank_port_offset);
+      return GPI2_SN_ERROR;
+    }
+  }
+  else
+  {
+    right_sock =
+      gaspi_sn_connect2port (pgaspi_gethostname (right_rank), port_to_connect,
+                             timeout_ms);
+    if (right_sock < 0)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to connect to rank %u on %d (%d).",
+                               right_rank, port_to_connect,
+                               right_rank_port_offset);
+      return GPI2_SN_ERROR;
+    }
+
+    left_sock = _gaspi_sn_wait_connection (port_to_wait, timeout_ms);
+    if (left_sock < 0)
+    {
+      close (right_sock);
+      GASPI_DEBUG_PRINT_ERROR ("Failed to accept connection on %d(%d).",
+                               port_to_wait, my_rank_port_offset);
+      return GPI2_SN_ERROR;
+    }
+  }
+
+  if (0 != gaspi_sn_set_non_blocking (left_sock))
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to set socket");
+    close (right_sock);
+    close (left_sock);
+    return GPI2_SN_ERROR;
+  }
+
+  if (0 != gaspi_sn_set_non_blocking (right_sock))
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to set socket");
+    close (right_sock);
+    close (left_sock);
+    return GPI2_SN_ERROR;
+  }
+
+  size_t actual_size = 0;
+  {
+    size_t dyn_size = get_dynamic_data_size (src);
+    size_t actual_size = size + dyn_size;
+    ensure_buffer_size (&buffer, &buffer_size, actual_size, stack_buffer_size, 0);
+    memcpy (buffer, src, size);
+    pack_dynamic_data (buffer + size, buffer);
+
+    ssize_t ret = gaspi_sn_writen (right_sock, buffer, actual_size);
+
+    if (ret != actual_size)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u.", right_rank);
+      free_buffer (buffer, buffer_size, stack_buffer_size);
+      close (right_sock);
+      close (left_sock);
+      return GPI2_SN_ERROR;
+    }
+  }
+
+  /* copy my part to recv buf */
+  char *recv_buf = (char *) recv;
+
+  memcpy (recv, src, size);
+  recv_buf += size;
+
+  /* exch with peers */
+  for (int r = 1; r < grp_ctx->tnc; r++)
+  {
+    {
+      ssize_t rret = gaspi_sn_readn (left_sock, buffer, size);
+      if (rret != size)
+      {
+        GASPI_DEBUG_PRINT_ERROR ("Failed to read from peer (%u).",
+                                grp_ctx->rank_grp[r]);
+        free_buffer (buffer, buffer_size, stack_buffer_size);
+        close (right_sock);
+        close (left_sock);
+        return GPI2_SN_ERROR;
+      }
+    }
+
+    size_t dyn_size = get_dynamic_data_size (buffer);
+    size_t actual_size = size + dyn_size;
+    ensure_buffer_size (&buffer, &buffer_size, actual_size, stack_buffer_size, 1);
+
+    {
+      ssize_t rret = gaspi_sn_readn (left_sock, buffer + size, dyn_size);
+      if (rret != dyn_size)
+      {
+        GASPI_DEBUG_PRINT_ERROR ("Failed to read from peer (%u).",
+                                grp_ctx->rank_grp[r]);
+        free_buffer (buffer, buffer_size, stack_buffer_size);
+        close (right_sock);
+        close (left_sock);
+        return GPI2_SN_ERROR;
+      }
+    }
+
+    memcpy (recv_buf, buffer, size);
+    unpack_dynamic_data (recv_buf, buffer + size);
+
+    size_t ret = gaspi_sn_writen (right_sock, buffer, actual_size);
+    if (ret != actual_size)
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to write to peer (%u).",
+                               grp_ctx->rank_grp[r]);
+      free_buffer (buffer, buffer_size, stack_buffer_size);
+      close (right_sock);
+      close (left_sock);
+      return GPI2_SN_ERROR;
+    }
+
+    recv_buf += size;
+  }
+
+  free_buffer (buffer, buffer_size, stack_buffer_size);
+
+  shutdown (right_sock, SHUT_WR);
+  shutdown (left_sock, SHUT_RD);
+
+  close (right_sock);
+  close (left_sock);
+
+  return 0;
+}
+
+#endif
 
 /*
   An allgather operation: each rank in group contributes with its part
