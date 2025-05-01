@@ -21,6 +21,7 @@
 #define UCX_DEVICE_ERR_UNSPECIFIED (-1)
 
 #define UCX_WC_SUCCESS 0
+#define UCX_WC_ERR 1
 
 typedef int ucx_device_status_t;
 

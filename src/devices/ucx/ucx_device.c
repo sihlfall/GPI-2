@@ -644,6 +644,34 @@ err:
 
 static
 void
+enqueue_wc (struct mpmc_queue * cq, struct ucx_wc * wc)
+{
+  struct ucx_wc * p = malloc (sizeof (struct ucx_wc));
+  *p = *wc;
+  (void) alf_enqueue (cq, (struct alf_tag_payload_pair) { .payload = (uintptr_t) p });
+}
+
+struct cb_enqueue_wc_and_free_request_user_data {
+  struct mpmc_queue * cq;
+  uint64_t wr_id;
+};
+
+static
+void
+cb_enqueue_wc_and_free_request (void * request, ucs_status_t status, void * user_data)
+{
+  struct cb_enqueue_wc_and_free_request_user_data * ud =
+   (struct cb_enqueue_wc_and_free_request_user_data *) user_data;
+  enqueue_wc (ud->cq, & (struct ucx_wc) {
+    .status = status == UCS_OK ? UCX_WC_SUCCESS : UCX_WC_ERR,
+    .wr_id = ud->wr_id
+  });
+  ucp_request_free (request);
+  free (user_data);
+}
+
+static
+void
 do_qp_rdma_write (
   struct ucx_device * ucx_device, struct ucx_qp * qp
 )
@@ -686,18 +714,30 @@ do_qp_rdma_write (
 
   fprintf (stderr, "And here!\n");
 
-
+  struct cb_enqueue_wc_and_free_request_user_data * ud = 
+    malloc (sizeof (struct cb_enqueue_wc_and_free_request_user_data));
+  *ud = (struct cb_enqueue_wc_and_free_request_user_data) {
+    .cq = qp->cq,
+    .wr_id = el->wr_id
+  };
   ucs_status_ptr_t request_put = ucp_put_nbx (
     ep, el->sg_list[0].addr, el->sg_list[0].length,
     el->wr.rdma.remote_addr, rkey_handle,
     & (ucp_request_param_t) {
-      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK,
-      .cb = { .send = cb_just_free_request }
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
+      .cb = { .send = cb_enqueue_wc_and_free_request },
+      .user_data = ud
     }
   );
-  if (UCS_PTR_IS_ERR(request_put))
+  if (request_put == UCS_OK)
+  {
+    enqueue_wc (qp->cq, & (struct ucx_wc) { .status = UCX_WC_SUCCESS, .wr_id = el->wr_id });
+    free (ud);
+  }
+  else if (UCS_PTR_IS_ERR(request_put))
   {
     fprintf (stderr, "ucp_put_nbx (qp) resulted in an error\n");
+    free (ud);
     goto err_put_nbx;
   }
 

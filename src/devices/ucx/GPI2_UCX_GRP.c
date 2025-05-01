@@ -54,6 +54,7 @@ err:
   return -1;
 }
 
+/*
 static
 int
 ucx_poll_cq (
@@ -63,7 +64,7 @@ ucx_poll_cq (
   int i = 0;
   while (1)
   {
-    /* TODO: Check for errors. */
+    // TODO: Check for errors.
     if (i >= num_entries) break;
     struct alf_tag_payload_pair d;
     if (!alf_dequeue (cq, &d)) break;
@@ -72,6 +73,7 @@ ucx_poll_cq (
   }
   return i;
 }
+*/
 
 /* TODO: number of elems to poll as arg */
 int

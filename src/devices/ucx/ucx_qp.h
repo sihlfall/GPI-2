@@ -36,14 +36,15 @@ struct ucx_wc {
 struct ucx_qp_init_attr {
   //ucp_ep_h ep;
   int dst;
+  struct mpmc_queue * cq;
 };
 
 /* queue pair */
 struct ucx_qp {
   //ucp_ep_h ep;
   int dst; /* TODO: Separate ep later? */
+  struct mpmc_queue * cq;
   struct mpmc_queue sq;
-  //struct ucx_wc * cq; /* ? */
 };
 
 /* TODO: internal, move out of here */
@@ -61,5 +62,6 @@ void ucx_qp_post_send (
   struct ucx_device * ucx_device, struct ucx_qp * qp, struct ucx_send_wr * wr,
   struct ucx_send_wr * bad_wr
 );
+int ucx_poll_cq (struct mpmc_queue * cq, uint32_t num_entries, struct ucx_wc * wc);
 
 #endif

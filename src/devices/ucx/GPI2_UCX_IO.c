@@ -64,7 +64,51 @@ pgaspi_dev_wait (gaspi_context_t * const gctx,
                  const gaspi_queue_id_t queue,
                  const gaspi_timeout_t timeout_ms)
 {
-  NOTIMPLEMENTED()
+  struct ucx_wc wc;
+
+  const int nr = gctx->ne_count_c[queue];
+  const gaspi_cycles_t s0 = gaspi_get_cycles();
+
+  gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+
+  int ne = 0;
+  for (int i = 0; i < nr; i++)
+  {
+    do
+    {
+      ne = ucx_poll_cq (&ucx_dev_ctx->scqC[queue], 1, &wc);
+      gctx->ne_count_c[queue] -= ne;    //TODO: this should be done below, when ne > 0
+
+      if (ne == 0)
+      {
+        const gaspi_cycles_t s1 = gaspi_get_cycles();
+        const gaspi_cycles_t tdelta = s1 - s0;
+
+        const float ms = (float) tdelta * gctx->cycles_to_msecs;
+
+        if (ms > timeout_ms)
+        {
+          return GASPI_TIMEOUT;
+        }
+      }
+    }
+    while (ne == 0);
+
+
+    if ((ne < 0) || (wc.status != UCX_WC_SUCCESS))
+    {
+      //TODO: for now here because we have to identify the rank
+      // but should be out of device?
+      gctx->state_vec[queue][wc.wr_id] = GASPI_STATE_CORRUPT;
+      GASPI_DEBUG_PRINT_ERROR(
+        "Failed request to %lu. Queue %d might be broken", wc.wr_id, queue
+      );
+
+      return GASPI_ERROR;
+    }
+  }
+
+  return GASPI_SUCCESS;
 }
 
 gaspi_return_t

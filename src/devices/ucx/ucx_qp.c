@@ -8,7 +8,7 @@ ucx_qp_create (struct ucx_qp_init_attr * attr) {
   struct ucx_qp * qp = calloc (1, sizeof (struct ucx_qp));
   if (!qp) return NULL;
   qp->dst = attr->dst;
-  /* TODO: What about cq? */
+  qp->cq = attr->cq;
   return qp;
 }
 
@@ -37,4 +37,20 @@ ucx_qp_post_send (
   }
 
   ucx_device_qp_rdma_write (ucx_device, qp);
+}
+
+int
+ucx_poll_cq (struct mpmc_queue * cq, uint32_t num_entries, struct ucx_wc * wc)
+{
+  uint32_t i = 0;
+  while (1) {
+    if (i >= num_entries) break;
+    struct alf_tag_payload_pair d;
+    int ret = alf_dequeue (cq, &d);
+    if (!ret) return 0;
+    struct ucx_wc * p = (struct ucx_wc *) d.payload;
+    wc[i++] = *p;
+    free (p);
+  }
+  return i;
 }
