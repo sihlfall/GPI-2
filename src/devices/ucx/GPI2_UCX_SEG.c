@@ -145,5 +145,20 @@ int
 pgaspi_dev_unregister_mem (gaspi_context_t const *const gctx,
                            gaspi_rc_mseg_t * seg)
 {
-  NOTIMPLEMENTED()
+  gaspi_ucx_ctx * ucx_device_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  struct ucx_device * ucx_device = &ucx_device_ctx->ucx_device;
+
+  if (seg->mr[0].addr)
+  {
+    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[0].mem_h);
+    ucp_rkey_buffer_release (seg->mr[0].rkey_buffer);
+    seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
+  }
+  if (seg->mr[1].addr)
+  {
+    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[1].mem_h);
+    ucp_rkey_buffer_release (seg->mr[1].rkey_buffer);
+    seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
+  }
+  return 0;
 }
