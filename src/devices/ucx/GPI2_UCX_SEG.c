@@ -150,14 +150,14 @@ pgaspi_dev_unregister_mem (gaspi_context_t const *const gctx,
 
   if (seg->mr[0].addr)
   {
-    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[0].mem_h);
     ucp_rkey_buffer_release (seg->mr[0].rkey_buffer);
+    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[0].mem_h);
     seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
   }
   if (seg->mr[1].addr)
   {
-    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[1].mem_h);
     ucp_rkey_buffer_release (seg->mr[1].rkey_buffer);
+    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[1].mem_h);
     seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
   }
   return 0;

@@ -578,7 +578,6 @@ do_rdma_write (
   {
     enqueue_send_completion (cq, wr_id);
     free (user_data);
-    ucp_rkey_destroy (rkey_handle); 
   }
   else if (UCS_PTR_IS_ERR(request))
   {
@@ -586,6 +585,7 @@ do_rdma_write (
     goto err_put_nbx;
   }
 
+  ucp_rkey_destroy (rkey_handle); 
   return;
 
 err_put_nbx:
@@ -738,8 +738,10 @@ do_qp_rdma_write (
   {
     fprintf (stderr, "ucp_put_nbx (qp) resulted in an error\n");
     free (ud);
+    ucp_rkey_destroy (rkey_handle);
     goto err_put_nbx;
   }
+  ucp_rkey_destroy (rkey_handle);
 
   struct cb_rdma_qp_flush_complete_user_data * flush_user_data = calloc (1,
     sizeof (struct cb_rdma_qp_flush_complete_user_data));
@@ -771,7 +773,6 @@ do_qp_rdma_write (
 err_flush_nbx:
   free (flush_user_data);
 err_put_nbx:
-  ucp_rkey_destroy (rkey_handle);
 err:
 }
 
