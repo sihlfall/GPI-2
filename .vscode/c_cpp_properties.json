@@ -5,10 +5,12 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/src",
-                "${HOME}/local/include"
+                "/home/cluster/local/include"
             ],
             "defines": [
-                "GPI2_DEVICE_UCX"
+                "GPI2_DEVICE_UCX",
+                "PLQUEUE_PAYLOAD_TYPE=uint64_t",
+                "PLQUEUE_NAME=dummy"
             ],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",
