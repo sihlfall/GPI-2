@@ -11,18 +11,21 @@ INC=-I/home/cluster/local/include -I./stub/include -I/home/cluster/local/include
 LIBS=/home/cluster/local/lib64/libGPI2.la
 OBJ_NAMES_GPI2UCX=GPI2_UCX_ATOMIC.o GPI2_UCX_GRP.o GPI2_UCX_IO.o \
   GPI2_UCX_PASSIVE.o GPI2_UCX_SEG.o GPI2_UCX.o \
-	ucx_device.o mpmc_queue.o ldqueue.o
+	ucx_device.o mpmc_queue.o
 OBJ_NAMES_STUB=GPI2.o GPI2_Utility.o
 
 OBJS_GPI2UCX = $(addprefix $(BIN)/, $(OBJ_NAMES_GPI2UCX))
 OBJS_STUB = $(addprefix $(BIN)/, $(OBJ_NAMES_STUB))
 
-all: $(BIN) $(BIN)/test01 $(BIN)/test02 $(BIN)/test03 $(BIN)/queue_timing $(BIN)/test04
+all: $(BIN) $(BIN)/test01 $(BIN)/test02 $(BIN)/test03 $(BIN)/queue_timing $(BIN)/test04 $(BIN)/plqueue_timing
 
 $(BIN):
 	mkdir -p bin
 
 $(BIN)/queue_timing: $(BIN)/mpmc_queue.o $(BIN)/queue_timing.o $(BIN)/queue_timing_cpp_interop.o
+	$(C) -o $@ $^ $(LINKFLAGS) -lstdc++
+
+$(BIN)/plqueue_timing: $(BIN)/plqueue_u64.o $(BIN)/plqueue_timing.o $(BIN)/plqueue_timing_cpp_interop.o
 	$(C) -o $@ $^ $(LINKFLAGS) -lstdc++
 
 $(BIN)/test01: $(BIN)/test01.o $(OBJS_GPI2UCX) $(OBJS_STUB)
@@ -40,11 +43,16 @@ $(BIN)/test04: $(BIN)/test04.o  $(OBJS_GPI2UCX) $(OBJS_STUB)
 $(BIN)/queue_timing.o: $(SRC)/queue_timing.cc
 	$(CC) $(CCFLAGS) $< -c -o $@ $(INC)
 
+$(BIN)/plqueue_timing.o: $(SRC)/plqueue_timing.cc
+	$(CC) $(CCFLAGS) $< -c -o $@ $(INC)
+
 $(BIN)/mpmc_queue.o: $(SRC_GPI2UCX)/mpmc_queue.c
 	$(C) $(CFLAGS) -mcx16 -O3 $< -c -o $@ $(INC)
 
-$(BIN)/ldqueue.o: $(SRC_GPI2UCX)/ldqueue.c
+$(BIN)/plqueue_u64.o: $(SRC)/plqueue_u64.c
 	$(C) $(CFLAGS) -mcx16 -O3 $< -c -o $@ $(INC)
+
+$(BIN)/plqueue_u64.o: $(SRC_GPI2UCX)/plqueue.incl.c $(SRC_GPI2UCX)/plqueue.incl.h
 
 $(BIN)/%.o: $(SRC_GPI2UCX)/%.c Makefile
 	$(C) $(CFLAGS) $< -c -o $@ $(INC)

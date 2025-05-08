@@ -2,6 +2,7 @@
   "files.associations": {
     "tcp_device.h": "c",
     "stdatomic.h": "c",
-    "ucp.h": "c"
+    "ucp.h": "c",
+    "random": "c"
   }
 }

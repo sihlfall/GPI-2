@@ -1,14 +1,3 @@
-#define MULTIPLE
-#if defined(SINGLE) + defined(MULTIPLE) != 1
-#error "Either SINGLE or MULTIPLE must be defined"
-#endif
-
-#ifdef SINGLE
-#define SM_PREFIX s
-#else
-#define SM_PREFIX m
-#endif
-
 #ifndef PLQUEUE_PAYLOAD_TYPE
 #error "PLQUEUE_PAYLOAD_TYPE not defined"
 #endif
@@ -16,45 +5,23 @@
 #error "PLQUEUE_NAME not defined"
 #endif
 
+#include "plqueue.incl.h"
+
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define STRUCT_PLQUEUE_ENTRY struct plqueue_##PLQUEUE_NAME##_entry
-#define STRUCT_PLQUEUE struct plqueue_##PLQUEUE_NAME
-#define STRUCT_MAYBE_PAYLOAD struct maybe_payload_##PLQUEUE_NAME
-#define PLQUEUE_PROC(proc) plqueue_##proc##_##PLQUEUE_NAME
+#include <stdio.h>
 
-STRUCT_PLQUEUE_ENTRY {
-  _Atomic(uint64_t) seq_flags;
-  PLQUEUE_PAYLOAD_TYPE payload;
-};
+#define CONCAT(a, b) a##b
+#define EXPAND_CONCAT(a, b) CONCAT(a, b)
+#define CONCAT3(a, b, c) a##b##c
+#define EXPAND_CONCAT3(a, b, c) CONCAT3(a, b, c)
 
-STRUCT_PLQUEUE {
-  int log2_capacity;
-  STRUCT_PLQUEUE_ENTRY * entries;
-};
-
-STRUCT_MAYBE_PAYLOAD {
-  _Bool has_value;
-  PLQUEUE_PAYLOAD_TYPE payload;
-};
-
-
-/* A cursor has the following bit layout:
- * 64 bits total
- * bits 0 and 1:                   flags
- *   bit 0 being set -> the entry is currently
- *     being written (= is locked)
- *   bit 1 being set -> the entry is full
- *   bit 0 and 1 cannot be both set at the same time
- * bits 2 to (log2_capacity + 1):  qbi
- *   = "queue buffer index"
- * bits (log2_capacity + 2) to 63: seq
- */
-
-typedef uint64_t s_cursor_t;
-typedef struct { _Atomic uint64_t v; } m_cursor_t; /* struct for type safety */
+#define STRUCT_PLQUEUE_ENTRY EXPAND_CONCAT3(struct plqueue_,PLQUEUE_NAME,_entry)
+#define STRUCT_PLQUEUE EXPAND_CONCAT(struct plqueue_,PLQUEUE_NAME)
+#define STRUCT_MAYBE_PAYLOAD EXPAND_CONCAT(struct maybe_payload_,PLQUEUE_NAME)
+#define PLQUEUE_PROC(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
 
 static inline
 s_cursor_t
@@ -208,7 +175,7 @@ PLQUEUE_PROC(mc_dequeue) (STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor)
       )) {
         m_advance_cursor_weak (read_cursor, rcr);
         result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 1, .payload = e->payload };
-        atomic_store_explicit(&e->seq_flags, sf - 3u + seq_inc, memory_order_release);
+        atomic_store_explicit(&e->seq_flags, sf - 2u + seq_inc, memory_order_release);
         return result;
       }
       rcr = m_load_cursor_relaxed (read_cursor);
@@ -224,6 +191,45 @@ PLQUEUE_PROC(mc_dequeue) (STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor)
   }
 }
 
+int
+PLQUEUE_PROC(sc_is_empty) (STRUCT_PLQUEUE * queue, s_cursor_t * read_cursor)
+{
+  int log2_capacity = queue->log2_capacity;
+  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
+  s_cursor_t qbi_mask = seq_inc - 4u;
+
+  s_cursor_t rcr = *read_cursor;
+  s_cursor_t rqbi = rcr & qbi_mask;
+
+  STRUCT_PLQUEUE_ENTRY * e = &queue->entries[rqbi >> 2];
+  s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+  s_cursor_t delta = (rcr - rqbi + 2u) - sf;
+
+  return delta != 0u;
+}
+
+int
+PLQUEUE_PROC(mc_is_empty) (STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor)
+{
+  s_cursor_t halfway = (s_cursor_t)1 << (8 * sizeof(s_cursor_t) - 1);
+  int log2_capacity = queue->log2_capacity;
+  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
+  s_cursor_t qbi_mask = seq_inc - 4u;
+
+  s_cursor_t rcr = m_load_cursor_relaxed (read_cursor);
+  s_cursor_t rqbi = rcr & qbi_mask;
+
+  STRUCT_PLQUEUE_ENTRY * e = &queue->entries[rqbi >> 2];
+  s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+  s_cursor_t delta = (rcr - rqbi + 2u) - sf;
+  return delta != 0u;
+}
+
+#undef PLQUEUE_PROC
 #undef STRUCT_MAYBE_PAYLOAD
 #undef STRUCT_PLQUEUE
 #undef STRUCT_PLQUEUE_ENTRY
+#undef EXPAND_CONCAT3
+#undef CONCAT3
+#undef EXPAND_CONCAT
+#undef CONCAT
