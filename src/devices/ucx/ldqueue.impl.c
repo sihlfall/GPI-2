@@ -14,7 +14,7 @@
 #define STRUCT_MAYBE_PAYLOAD struct maybe_payload_##PLQUEUE_NAME
 
 STRUCT_PLQUEUE_ENTRY {
-  uint64_t seq_flags;
+  _Atomic(uint64_t) seq_flags;
   PLQUEUE_PAYLOAD_TYPE payload;
 };
 
@@ -46,6 +46,7 @@ plqueue_enqueue (
   STRUCT_PLQUEUE * queue, _Atomic(size_t) * write_idx, PLQUEUE_PAYLOAD_TYPE payload
 )
 {
+  size_t halfway = (size_t)1 << (8 * sizeof(size_t) - 1);
   int log2_capacity = queue->log2_capacity;
   size_t seq_inc = (size_t)1 << (log2_capacity + 2);
   size_t qbi_mask = seq_inc - 4u;
