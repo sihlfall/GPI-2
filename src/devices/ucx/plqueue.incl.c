@@ -34,9 +34,12 @@ static inline
 void
 m_advance_cursor_weak (m_cursor_t * cursor, s_cursor_t expected)
 {
-  (void) atomic_compare_exchange_weak_explicit(
-    &cursor->v, &expected, expected + 4u, memory_order_relaxed, memory_order_relaxed
-  );
+  s_cursor_t c = atomic_load_explicit(&cursor->v, memory_order_relaxed);
+  if (c == expected) {
+    (void) atomic_compare_exchange_weak_explicit(
+      &cursor->v, &c, expected + 4u, memory_order_relaxed, memory_order_relaxed
+    );
+  }
 }
 
 static inline
@@ -44,12 +47,16 @@ s_cursor_t
 m_advance_or_reload_cursor (m_cursor_t * cursor, s_cursor_t expected)
 {
   s_cursor_t a = expected + 4u;
-  if (atomic_compare_exchange_strong_explicit(
-    &cursor->v, &expected, a, memory_order_relaxed, memory_order_relaxed
-  )) {
+  s_cursor_t c = atomic_load_explicit(&cursor->v, memory_order_relaxed);
+  if (
+    c == expected &&
+    atomic_compare_exchange_strong_explicit(
+      &cursor->v, &c, a, memory_order_relaxed, memory_order_relaxed
+    )
+  ) {
     return a;
   } else {
-    return m_load_cursor_relaxed (cursor);
+    return c;
   }
 }
 
