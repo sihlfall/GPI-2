@@ -66,6 +66,16 @@ STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue) (
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_m_cursor_t * read_cursor
 );
+STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * read_cursor
+);
+STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue_speculative) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * read_cursor
+);
 int PLQUEUE_FN(sc_is_empty) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],

@@ -209,6 +209,50 @@ PLQUEUE_FN(mc_dequeue) (
   }
 }
 
+/* returns 1 if successful, 0 if not */
+STRUCT_MAYBE_PAYLOAD
+PLQUEUE_FN(mc_dequeue_speculative) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * read_cursor
+)
+{
+  STRUCT_MAYBE_PAYLOAD result;
+
+  plqueue_s_cursor_t halfway =
+    (plqueue_s_cursor_t)1 << (8 * sizeof(plqueue_s_cursor_t) - 1);
+  plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
+  plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
+
+  plqueue_s_cursor_t rcr = m_load_cursor_relaxed (read_cursor);
+  while (1) {
+    plqueue_s_cursor_t rqbi = rcr & qbi_mask;
+
+    STRUCT_PLQUEUE_ENTRY * e = &entries[rqbi >> 2];
+    plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+    plqueue_s_cursor_t delta = (rcr - rqbi + 2u) - sf;
+    if (delta == 0u) {
+      result.payload = e->payload;
+      if (atomic_compare_exchange_strong_explicit(
+        &e->seq_flags, &sf, sf - 2u + seq_inc, memory_order_acq_rel, memory_order_relaxed
+      )) {
+        m_advance_cursor_weak (read_cursor, rcr);
+        result.has_value = 1;
+        return result;
+      }
+      rcr = m_load_cursor_relaxed (read_cursor);
+    } else if (delta <= 2u) {
+      /* queue is empty */
+      result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 0 };
+      return result;
+    } else if (delta & halfway) {
+      rcr = m_reload_or_advance_cursor (read_cursor, rcr);
+    } else {
+      rcr = m_load_cursor_relaxed (read_cursor);
+    }
+  }
+}
+
 int
 PLQUEUE_FN(sc_is_empty) (
   int log2_capacity,
