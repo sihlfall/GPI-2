@@ -11,8 +11,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <stdio.h>
-
 #define CONCAT(a, b) a##b
 #define EXPAND_CONCAT(a, b) CONCAT(a, b)
 #define CONCAT3(a, b, c) a##b##c
@@ -20,36 +18,38 @@
 
 #define STRUCT_PLQUEUE_ENTRY EXPAND_CONCAT3(struct plqueue_,PLQUEUE_NAME,_entry)
 #define STRUCT_PLQUEUE EXPAND_CONCAT(struct plqueue_,PLQUEUE_NAME)
-#define STRUCT_MAYBE_PAYLOAD EXPAND_CONCAT(struct maybe_payload_,PLQUEUE_NAME)
-#define PLQUEUE_PROC(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
+#define STRUCT_MAYBE_PAYLOAD EXPAND_CONCAT(struct plqueue_maybe_payload_,PLQUEUE_NAME)
+#define PLQUEUE_FN(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
 
 static inline
-s_cursor_t
-m_load_cursor_relaxed (m_cursor_t * cursor)
+plqueue_s_cursor_t
+m_load_cursor_relaxed (plqueue_m_cursor_t * cursor)
 {
-  return (s_cursor_t) { atomic_load_explicit(&cursor->v, memory_order_relaxed) };
+  return (plqueue_s_cursor_t) {
+    atomic_load_explicit(&cursor->v, memory_order_relaxed)
+  };
 }
 
 static inline
 void
-m_advance_cursor_weak (m_cursor_t * cursor, s_cursor_t expected)
+m_advance_cursor_weak (plqueue_m_cursor_t * cursor, plqueue_s_cursor_t expected)
 {
-  s_cursor_t c = atomic_load_explicit(&cursor->v, memory_order_relaxed);
-  if (c == expected) {
-    (void) atomic_compare_exchange_weak_explicit(
-      &cursor->v, &c, expected + 4u, memory_order_relaxed, memory_order_relaxed
-    );
-  }
+  plqueue_s_cursor_t c = expected;
+  (void) atomic_compare_exchange_weak_explicit(
+    &cursor->v, &c, expected + 4u, memory_order_relaxed, memory_order_relaxed
+  );
 }
 
 static inline
-s_cursor_t
-m_advance_or_reload_cursor (m_cursor_t * cursor, s_cursor_t expected)
+plqueue_s_cursor_t
+m_reload_or_advance_cursor (
+  plqueue_m_cursor_t * cursor, plqueue_s_cursor_t advance_when
+)
 {
-  s_cursor_t a = expected + 4u;
-  s_cursor_t c = atomic_load_explicit(&cursor->v, memory_order_relaxed);
+  plqueue_s_cursor_t a = advance_when + 4u;
+  plqueue_s_cursor_t c = atomic_load_explicit(&cursor->v, memory_order_relaxed);
   if (
-    c == expected &&
+    c == advance_when &&
     atomic_compare_exchange_strong_explicit(
       &cursor->v, &c, a, memory_order_relaxed, memory_order_relaxed
     )
@@ -63,20 +63,21 @@ m_advance_or_reload_cursor (m_cursor_t * cursor, s_cursor_t expected)
 /* write_cursor must be a multiple of 4 (last two bits not set) */
 /* returns 1 if successful, 0 if not */
 int
-PLQUEUE_PROC(sp_enqueue) (
-  STRUCT_PLQUEUE * queue, s_cursor_t * write_cursor, PLQUEUE_PAYLOAD_TYPE payload
+PLQUEUE_FN(sp_enqueue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_s_cursor_t * write_cursor, PLQUEUE_PAYLOAD_TYPE payload
 )
 {
-  int log2_capacity = queue->log2_capacity;
-  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
-  s_cursor_t qbi_mask = seq_inc - 4u;
+  plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
+  plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
 
-  s_cursor_t wcr = *write_cursor;
-  s_cursor_t wqbi = wcr & qbi_mask;
+  plqueue_s_cursor_t wcr = *write_cursor;
+  plqueue_s_cursor_t wqbi = wcr & qbi_mask;
 
-  STRUCT_PLQUEUE_ENTRY * e = &queue->entries[wqbi >> 2];
-  s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
-  s_cursor_t delta = sf - (wcr - wqbi);
+  STRUCT_PLQUEUE_ENTRY * e = &entries[wqbi >> 2];
+  plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+  plqueue_s_cursor_t delta = sf - (wcr - wqbi);
   if (delta == 0u) {
     *write_cursor += 4u;
     e->payload = payload;
@@ -90,22 +91,25 @@ PLQUEUE_PROC(sp_enqueue) (
 /* write_cursor must be a multiple of 4 (last two bits not set) */
 /* returns 1 if successful, 0 if not */
 int
-PLQUEUE_PROC(mp_enqueue) (
-  STRUCT_PLQUEUE * queue, m_cursor_t * write_cursor, PLQUEUE_PAYLOAD_TYPE payload
+PLQUEUE_FN(mp_enqueue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * write_cursor,
+  PLQUEUE_PAYLOAD_TYPE payload
 )
 {
-  s_cursor_t halfway = (s_cursor_t)1 << (8 * sizeof(s_cursor_t) - 1);
-  int log2_capacity = queue->log2_capacity;
-  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
-  s_cursor_t qbi_mask = seq_inc - 4u;
+  plqueue_s_cursor_t halfway =
+    (plqueue_s_cursor_t)1 << (8 * sizeof(plqueue_s_cursor_t) - 1);
+  plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
+  plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
 
-  s_cursor_t wcr = m_load_cursor_relaxed (write_cursor);
+  plqueue_s_cursor_t wcr = m_load_cursor_relaxed (write_cursor);
   while (1) {
-    s_cursor_t wqbi = wcr & qbi_mask;
+    plqueue_s_cursor_t wqbi = wcr & qbi_mask;
 
-    STRUCT_PLQUEUE_ENTRY * e = &queue->entries[wqbi >> 2];
-    s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
-    s_cursor_t delta = sf - (wcr - wqbi);
+    STRUCT_PLQUEUE_ENTRY * e = &entries[wqbi >> 2];
+    plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+    plqueue_s_cursor_t delta = sf - (wcr - wqbi);
     if (delta == 0u) {
       if (atomic_compare_exchange_strong_explicit(
         &e->seq_flags, &sf, sf + 1u, memory_order_acq_rel, memory_order_relaxed
@@ -120,7 +124,7 @@ PLQUEUE_PROC(mp_enqueue) (
       /* 1u -> currently being written
        * 2u -> already written, hence full 
        */
-      wcr = m_advance_or_reload_cursor (write_cursor, wcr);
+      wcr = m_reload_or_advance_cursor (write_cursor, wcr);
     } else if (delta & halfway) {
       return 0;
     } else {
@@ -132,20 +136,23 @@ PLQUEUE_PROC(mp_enqueue) (
 
 /* returns 1 if successful, 0 if not */
 STRUCT_MAYBE_PAYLOAD
-PLQUEUE_PROC(sc_dequeue) (STRUCT_PLQUEUE * queue, s_cursor_t * read_cursor)
+PLQUEUE_FN(sc_dequeue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_s_cursor_t * read_cursor
+)
 {
   STRUCT_MAYBE_PAYLOAD result;
 
-  int log2_capacity = queue->log2_capacity;
-  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
-  s_cursor_t qbi_mask = seq_inc - 4u;
+  plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
+  plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
 
-  s_cursor_t rcr = *read_cursor;
-  s_cursor_t rqbi = rcr & qbi_mask;
+  plqueue_s_cursor_t rcr = *read_cursor;
+  plqueue_s_cursor_t rqbi = rcr & qbi_mask;
 
-  STRUCT_PLQUEUE_ENTRY * e = &queue->entries[rqbi >> 2];
-  s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
-  s_cursor_t delta = (rcr - rqbi + 2u) - sf;
+  STRUCT_PLQUEUE_ENTRY * e = &entries[rqbi >> 2];
+  plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+  plqueue_s_cursor_t delta = (rcr - rqbi + 2u) - sf;
   if (delta == 0u) {
     *read_cursor += 4u;
     result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 1, .payload = e->payload };
@@ -160,22 +167,26 @@ PLQUEUE_PROC(sc_dequeue) (STRUCT_PLQUEUE * queue, s_cursor_t * read_cursor)
 
 /* returns 1 if successful, 0 if not */
 STRUCT_MAYBE_PAYLOAD
-PLQUEUE_PROC(mc_dequeue) (STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor)
+PLQUEUE_FN(mc_dequeue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * read_cursor
+)
 {
   STRUCT_MAYBE_PAYLOAD result;
 
-  s_cursor_t halfway = (s_cursor_t)1 << (8 * sizeof(s_cursor_t) - 1);
-  int log2_capacity = queue->log2_capacity;
-  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
-  s_cursor_t qbi_mask = seq_inc - 4u;
+  plqueue_s_cursor_t halfway =
+    (plqueue_s_cursor_t)1 << (8 * sizeof(plqueue_s_cursor_t) - 1);
+  plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
+  plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
 
-  s_cursor_t rcr = m_load_cursor_relaxed (read_cursor);
+  plqueue_s_cursor_t rcr = m_load_cursor_relaxed (read_cursor);
   while (1) {
-    s_cursor_t rqbi = rcr & qbi_mask;
+    plqueue_s_cursor_t rqbi = rcr & qbi_mask;
 
-    STRUCT_PLQUEUE_ENTRY * e = &queue->entries[rqbi >> 2];
-    s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
-    s_cursor_t delta = (rcr - rqbi + 2u) - sf;
+    STRUCT_PLQUEUE_ENTRY * e = &entries[rqbi >> 2];
+    plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+    plqueue_s_cursor_t delta = (rcr - rqbi + 2u) - sf;
     if (delta == 0u) {
       if (atomic_compare_exchange_strong_explicit(
         &e->seq_flags, &sf, sf + 1u, memory_order_acq_rel, memory_order_relaxed
@@ -191,7 +202,7 @@ PLQUEUE_PROC(mc_dequeue) (STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor)
       result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 0 };
       return result;
     } else if (delta & halfway) {
-      rcr = m_advance_or_reload_cursor (read_cursor, rcr);
+      rcr = m_reload_or_advance_cursor (read_cursor, rcr);
     } else {
       rcr = m_load_cursor_relaxed (read_cursor);
     }
@@ -199,42 +210,46 @@ PLQUEUE_PROC(mc_dequeue) (STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor)
 }
 
 int
-PLQUEUE_PROC(sc_is_empty) (STRUCT_PLQUEUE * queue, s_cursor_t * read_cursor)
+PLQUEUE_FN(sc_is_empty) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_s_cursor_t * read_cursor
+)
 {
-  int log2_capacity = queue->log2_capacity;
-  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
-  s_cursor_t qbi_mask = seq_inc - 4u;
+  plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
+  plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
 
-  s_cursor_t rcr = *read_cursor;
-  s_cursor_t rqbi = rcr & qbi_mask;
+  plqueue_s_cursor_t rcr = *read_cursor;
+  plqueue_s_cursor_t rqbi = rcr & qbi_mask;
 
-  STRUCT_PLQUEUE_ENTRY * e = &queue->entries[rqbi >> 2];
-  s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
-  s_cursor_t delta = (rcr - rqbi + 2u) - sf;
+  STRUCT_PLQUEUE_ENTRY * e = &entries[rqbi >> 2];
+  plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+  plqueue_s_cursor_t delta = (rcr - rqbi + 2u) - sf;
 
   return delta != 0u;
 }
 
 int
-PLQUEUE_PROC(mc_is_empty) (STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor)
+PLQUEUE_FN(mc_is_empty) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * read_cursor
+)
 {
-  s_cursor_t halfway = (s_cursor_t)1 << (8 * sizeof(s_cursor_t) - 1);
-  int log2_capacity = queue->log2_capacity;
-  s_cursor_t seq_inc = (s_cursor_t)1 << (log2_capacity + 2);
-  s_cursor_t qbi_mask = seq_inc - 4u;
+  plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
+  plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
 
-  s_cursor_t rcr = m_load_cursor_relaxed (read_cursor);
-  s_cursor_t rqbi = rcr & qbi_mask;
+  plqueue_s_cursor_t rcr = m_load_cursor_relaxed (read_cursor);
+  plqueue_s_cursor_t rqbi = rcr & qbi_mask;
 
-  STRUCT_PLQUEUE_ENTRY * e = &queue->entries[rqbi >> 2];
-  s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
-  s_cursor_t delta = (rcr - rqbi + 2u) - sf;
+  STRUCT_PLQUEUE_ENTRY * e = &entries[rqbi >> 2];
+  plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
+  plqueue_s_cursor_t delta = (rcr - rqbi + 2u) - sf;
   return delta != 0u;
 }
 
-#undef PLQUEUE_PROC
+#undef PLQUEUE_FN
 #undef STRUCT_MAYBE_PAYLOAD
-#undef STRUCT_PLQUEUE
 #undef STRUCT_PLQUEUE_ENTRY
 #undef EXPAND_CONCAT3
 #undef CONCAT3

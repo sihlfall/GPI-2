@@ -21,8 +21,8 @@
  * bits (log2_capacity + 2) to 63: seq
  */
 
-typedef uint64_t s_cursor_t;
-typedef struct { _Atomic uint64_t v; } m_cursor_t; /* struct for type safety */
+typedef uint64_t plqueue_s_cursor_t;
+typedef struct { _Atomic uint64_t v; } plqueue_m_cursor_t; /* struct for type safety */
 
 #define CONCAT(a, b) a##b
 #define EXPAND_CONCAT(a, b) CONCAT(a, b)
@@ -31,17 +31,12 @@ typedef struct { _Atomic uint64_t v; } m_cursor_t; /* struct for type safety */
 
 #define STRUCT_PLQUEUE_ENTRY EXPAND_CONCAT3(struct plqueue_,PLQUEUE_NAME,_entry)
 #define STRUCT_PLQUEUE EXPAND_CONCAT(struct plqueue_,PLQUEUE_NAME)
-#define STRUCT_MAYBE_PAYLOAD EXPAND_CONCAT(struct maybe_payload_,PLQUEUE_NAME)
-#define PLQUEUE_PROC(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
+#define STRUCT_MAYBE_PAYLOAD EXPAND_CONCAT(struct plqueue_maybe_payload_,PLQUEUE_NAME)
+#define PLQUEUE_FN(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
 
 STRUCT_PLQUEUE_ENTRY {
   _Atomic uint64_t seq_flags;
   PLQUEUE_PAYLOAD_TYPE payload;
-};
-
-STRUCT_PLQUEUE {
-  int log2_capacity;
-  STRUCT_PLQUEUE_ENTRY * entries;
 };
 
 STRUCT_MAYBE_PAYLOAD {
@@ -49,27 +44,40 @@ STRUCT_MAYBE_PAYLOAD {
   PLQUEUE_PAYLOAD_TYPE payload;
 };
 
-int PLQUEUE_PROC(sp_enqueue) (
-  STRUCT_PLQUEUE * queue, s_cursor_t * write_cursor, PLQUEUE_PAYLOAD_TYPE payload
+int PLQUEUE_FN(sp_enqueue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_s_cursor_t * write_cursor,
+  PLQUEUE_PAYLOAD_TYPE payload
 );
-int PLQUEUE_PROC(mp_enqueue) (
-  STRUCT_PLQUEUE * queue, m_cursor_t * write_cursor, PLQUEUE_PAYLOAD_TYPE payload
+int PLQUEUE_FN(mp_enqueue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * write_cursor,
+  PLQUEUE_PAYLOAD_TYPE payload
 );
-STRUCT_MAYBE_PAYLOAD PLQUEUE_PROC(sc_dequeue) (
-  STRUCT_PLQUEUE * queue, s_cursor_t * read_cursor
+STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(sc_dequeue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_s_cursor_t * read_cursor
 );
-STRUCT_MAYBE_PAYLOAD PLQUEUE_PROC(mc_dequeue) (
-  STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor
+STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * read_cursor
 );
-int PLQUEUE_PROC(sc_is_empty) (
-  STRUCT_PLQUEUE * queue, s_cursor_t * read_cursor
+int PLQUEUE_FN(sc_is_empty) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_s_cursor_t * read_cursor
 );
-int PLQUEUE_PROC(mc_is_empty) (
-  STRUCT_PLQUEUE * queue, m_cursor_t * read_cursor
+int PLQUEUE_FN(mc_is_empty) (
+  int log2_capacity,
+  STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
+  plqueue_m_cursor_t * read_cursor
 );
 
-
-#undef PLQUEUE_PROC
+#undef PLQUEUE_FN
 #undef STRUCT_MAYBE_PAYLOAD
 #undef STRUCT_PLQUEUE
 #undef STRUCT_PLQUEUE_ENTRY
