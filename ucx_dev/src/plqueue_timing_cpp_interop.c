@@ -6,8 +6,8 @@
 struct plqueue_u64_rw {
   int log2_capacity;
   struct plqueue_u64_entry * entries;
-  alignas(64) m_cursor_t write_cursor;
-  alignas(64) m_cursor_t read_cursor;
+  alignas(64) plqueue_m_cursor_t write_cursor;
+  alignas(64) plqueue_m_cursor_t read_cursor;
 };
 
 struct plqueue_u64_rw * queue_create (void) {
@@ -15,7 +15,7 @@ struct plqueue_u64_rw * queue_create (void) {
   struct plqueue_u64_rw * q = calloc (1, sizeof(*q));
   *q = (struct plqueue_u64_rw) {
     .log2_capacity = log2_capacity,
-    .entries = calloc (1 << log2_capacity, sizeof(*q->entries))
+    .entries = calloc ((size_t)1 << log2_capacity, sizeof(*q->entries))
   };
   return q;
 }
@@ -31,7 +31,7 @@ int queue_enqueue (struct plqueue_u64_rw * q, uint64_t payload) {
 }
 
 int queue_dequeue (struct plqueue_u64_rw * q, uint64_t * payload) {
-  struct maybe_payload_u64 r = plqueue_mc_dequeue_u64 (
+  struct plqueue_maybe_payload_u64 r = plqueue_mc_dequeue_u64 (
     q->log2_capacity, q->entries, &q->read_cursor
   );
   if (r.has_value) {
