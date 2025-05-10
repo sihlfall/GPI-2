@@ -16,7 +16,6 @@ struct Queue {
     if (this->q) queue_destroy (this->q);
   }
   bool push (uint64_t v) {
-    using Pair = struct alf_tag_payload_pair;
     return !!queue_enqueue (this->q, v);
   }
   bool pop (uint64_t & v) {

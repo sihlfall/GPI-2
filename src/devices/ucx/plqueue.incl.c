@@ -11,6 +11,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <immintrin.h>
+
 #define CONCAT(a, b) a##b
 #define EXPAND_CONCAT(a, b) CONCAT(a, b)
 #define CONCAT3(a, b, c) a##b##c
@@ -18,16 +20,24 @@
 
 #define STRUCT_PLQUEUE_ENTRY EXPAND_CONCAT3(struct plqueue_,PLQUEUE_NAME,_entry)
 #define STRUCT_PLQUEUE EXPAND_CONCAT(struct plqueue_,PLQUEUE_NAME)
-#define STRUCT_MAYBE_PAYLOAD EXPAND_CONCAT(struct plqueue_maybe_payload_,PLQUEUE_NAME)
+#define STRUCT_PLQUEUE_MAYBE_PAYLOAD \
+  EXPAND_CONCAT(struct plqueue_maybe_payload_,PLQUEUE_NAME)
 #define PLQUEUE_FN(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
+
+static inline
+void
+cpu_pause (int * pausecnt)
+{
+  int cnt = *pausecnt;
+  for (int i = 0; i <= cnt; ++i) _mm_pause ();
+  if (cnt < 512) *pausecnt = cnt * 2;
+}
 
 static inline
 plqueue_s_cursor_t
 m_load_cursor_relaxed (plqueue_m_cursor_t * cursor)
 {
-  return (plqueue_s_cursor_t) {
-    atomic_load_explicit(&cursor->v, memory_order_relaxed)
-  };
+  return atomic_load_explicit(&cursor->v, memory_order_relaxed);
 }
 
 static inline
@@ -98,6 +108,7 @@ PLQUEUE_FN(mp_enqueue) (
   PLQUEUE_PAYLOAD_TYPE payload
 )
 {
+  int pausecnt = 1;
   plqueue_s_cursor_t halfway =
     (plqueue_s_cursor_t)1 << (8 * sizeof(plqueue_s_cursor_t) - 1);
   plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
@@ -119,15 +130,18 @@ PLQUEUE_FN(mp_enqueue) (
         atomic_store_explicit(&e->seq_flags, sf + 2u, memory_order_release);
         return 1;
       }
+      cpu_pause (&pausecnt);
       wcr = m_load_cursor_relaxed (write_cursor);
     } else if (delta <= 2u) {
       /* 1u -> currently being written
        * 2u -> already written, hence full 
        */
+      cpu_pause (&pausecnt);
       wcr = m_reload_or_advance_cursor (write_cursor, wcr);
     } else if (delta & halfway) {
       return 0;
     } else {
+      cpu_pause (&pausecnt);
       wcr = m_load_cursor_relaxed (write_cursor);
     }
   }
@@ -135,14 +149,14 @@ PLQUEUE_FN(mp_enqueue) (
 
 
 /* returns 1 if successful, 0 if not */
-STRUCT_MAYBE_PAYLOAD
+STRUCT_PLQUEUE_MAYBE_PAYLOAD
 PLQUEUE_FN(sc_dequeue) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_s_cursor_t * read_cursor
 )
 {
-  STRUCT_MAYBE_PAYLOAD result;
+  STRUCT_PLQUEUE_MAYBE_PAYLOAD result;
 
   plqueue_s_cursor_t seq_inc = (plqueue_s_cursor_t)1 << (log2_capacity + 2);
   plqueue_s_cursor_t qbi_mask = seq_inc - 4u;
@@ -155,25 +169,25 @@ PLQUEUE_FN(sc_dequeue) (
   plqueue_s_cursor_t delta = (rcr - rqbi + 2u) - sf;
   if (delta == 0u) {
     *read_cursor += 4u;
-    result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 1, .payload = e->payload };
+    result = (STRUCT_PLQUEUE_MAYBE_PAYLOAD) { .has_value = 1, .payload = e->payload };
     atomic_store_explicit(&e->seq_flags, sf - 3u + seq_inc, memory_order_release);
   } else {
     /* queue is empty */
-    result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 0 };
+    result = (STRUCT_PLQUEUE_MAYBE_PAYLOAD) { .has_value = 0 };
   }
 
   return result;
 }
 
 /* returns 1 if successful, 0 if not */
-STRUCT_MAYBE_PAYLOAD
+STRUCT_PLQUEUE_MAYBE_PAYLOAD
 PLQUEUE_FN(mc_dequeue) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_m_cursor_t * read_cursor
 )
 {
-  STRUCT_MAYBE_PAYLOAD result;
+  int pausecnt = 1;
 
   plqueue_s_cursor_t halfway =
     (plqueue_s_cursor_t)1 << (8 * sizeof(plqueue_s_cursor_t) - 1);
@@ -192,32 +206,34 @@ PLQUEUE_FN(mc_dequeue) (
         &e->seq_flags, &sf, sf + 1u, memory_order_acq_rel, memory_order_relaxed
       )) {
         m_advance_cursor_weak (read_cursor, rcr);
-        result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 1, .payload = e->payload };
+        PLQUEUE_PAYLOAD_TYPE payload = e->payload;
         atomic_store_explicit(&e->seq_flags, sf - 2u + seq_inc, memory_order_release);
-        return result;
+        return (STRUCT_PLQUEUE_MAYBE_PAYLOAD) { .has_value = 1, .payload = payload };
       }
+      cpu_pause (&pausecnt);
       rcr = m_load_cursor_relaxed (read_cursor);
     } else if (delta <= 2u) {
       /* queue is empty */
-      result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 0 };
-      return result;
+      return (STRUCT_PLQUEUE_MAYBE_PAYLOAD) { .has_value = 0 };
     } else if (delta & halfway) {
+      cpu_pause (&pausecnt);
       rcr = m_reload_or_advance_cursor (read_cursor, rcr);
     } else {
+      cpu_pause (&pausecnt);
       rcr = m_load_cursor_relaxed (read_cursor);
     }
   }
 }
 
 /* returns 1 if successful, 0 if not */
-STRUCT_MAYBE_PAYLOAD
+STRUCT_PLQUEUE_MAYBE_PAYLOAD
 PLQUEUE_FN(mc_dequeue_speculative) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_m_cursor_t * read_cursor
 )
 {
-  STRUCT_MAYBE_PAYLOAD result;
+  int pausecnt = 1;
 
   plqueue_s_cursor_t halfway =
     (plqueue_s_cursor_t)1 << (8 * sizeof(plqueue_s_cursor_t) - 1);
@@ -232,22 +248,24 @@ PLQUEUE_FN(mc_dequeue_speculative) (
     plqueue_s_cursor_t sf = atomic_load_explicit(&e->seq_flags, memory_order_acquire);
     plqueue_s_cursor_t delta = (rcr - rqbi + 2u) - sf;
     if (delta == 0u) {
-      result.payload = e->payload;
+      PLQUEUE_PAYLOAD_TYPE payload = e->payload;
       if (atomic_compare_exchange_strong_explicit(
-        &e->seq_flags, &sf, sf - 2u + seq_inc, memory_order_acq_rel, memory_order_relaxed
+        &e->seq_flags, &sf, sf - 2u + seq_inc,
+        memory_order_acq_rel, memory_order_relaxed
       )) {
         m_advance_cursor_weak (read_cursor, rcr);
-        result.has_value = 1;
-        return result;
+        return (STRUCT_PLQUEUE_MAYBE_PAYLOAD) { .has_value = 1, .payload = payload };
       }
+      cpu_pause (&pausecnt);
       rcr = m_load_cursor_relaxed (read_cursor);
     } else if (delta <= 2u) {
       /* queue is empty */
-      result = (STRUCT_MAYBE_PAYLOAD) { .has_value = 0 };
-      return result;
+      return (STRUCT_PLQUEUE_MAYBE_PAYLOAD) { .has_value = 0 };
     } else if (delta & halfway) {
+      cpu_pause (&pausecnt);
       rcr = m_reload_or_advance_cursor (read_cursor, rcr);
     } else {
+      cpu_pause (&pausecnt);
       rcr = m_load_cursor_relaxed (read_cursor);
     }
   }
@@ -293,7 +311,7 @@ PLQUEUE_FN(mc_is_empty) (
 }
 
 #undef PLQUEUE_FN
-#undef STRUCT_MAYBE_PAYLOAD
+#undef STRUCT_PLQUEUE_MAYBE_PAYLOAD
 #undef STRUCT_PLQUEUE_ENTRY
 #undef EXPAND_CONCAT3
 #undef CONCAT3

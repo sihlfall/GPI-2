@@ -30,8 +30,8 @@ typedef struct { _Atomic uint64_t v; } plqueue_m_cursor_t; /* struct for type sa
 #define EXPAND_CONCAT3(a, b, c) CONCAT3(a, b, c)
 
 #define STRUCT_PLQUEUE_ENTRY EXPAND_CONCAT3(struct plqueue_,PLQUEUE_NAME,_entry)
-#define STRUCT_PLQUEUE EXPAND_CONCAT(struct plqueue_,PLQUEUE_NAME)
-#define STRUCT_MAYBE_PAYLOAD EXPAND_CONCAT(struct plqueue_maybe_payload_,PLQUEUE_NAME)
+#define STRUCT_PLQUEUE_MAYBE_PAYLOAD \
+  EXPAND_CONCAT(struct plqueue_maybe_payload_,PLQUEUE_NAME)
 #define PLQUEUE_FN(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
 
 STRUCT_PLQUEUE_ENTRY {
@@ -39,7 +39,7 @@ STRUCT_PLQUEUE_ENTRY {
   PLQUEUE_PAYLOAD_TYPE payload;
 };
 
-STRUCT_MAYBE_PAYLOAD {
+STRUCT_PLQUEUE_MAYBE_PAYLOAD {
   _Bool has_value;
   PLQUEUE_PAYLOAD_TYPE payload;
 };
@@ -56,22 +56,22 @@ int PLQUEUE_FN(mp_enqueue) (
   plqueue_m_cursor_t * write_cursor,
   PLQUEUE_PAYLOAD_TYPE payload
 );
-STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(sc_dequeue) (
+STRUCT_PLQUEUE_MAYBE_PAYLOAD PLQUEUE_FN(sc_dequeue) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_s_cursor_t * read_cursor
 );
-STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue) (
+STRUCT_PLQUEUE_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_m_cursor_t * read_cursor
 );
-STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue) (
+STRUCT_PLQUEUE_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_m_cursor_t * read_cursor
 );
-STRUCT_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue_speculative) (
+STRUCT_PLQUEUE_MAYBE_PAYLOAD PLQUEUE_FN(mc_dequeue_speculative) (
   int log2_capacity,
   STRUCT_PLQUEUE_ENTRY entries [static (size_t)1 << log2_capacity],
   plqueue_m_cursor_t * read_cursor
@@ -88,8 +88,7 @@ int PLQUEUE_FN(mc_is_empty) (
 );
 
 #undef PLQUEUE_FN
-#undef STRUCT_MAYBE_PAYLOAD
-#undef STRUCT_PLQUEUE
+#undef STRUCT_PLQUEUE_MAYBE_PAYLOAD
 #undef STRUCT_PLQUEUE_ENTRY
 #undef EXPAND_CONCAT3
 #undef CONCAT3
