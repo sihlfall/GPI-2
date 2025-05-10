@@ -35,7 +35,7 @@ struct ucx_device_msg_rdma_write_data {
   int dst;
   void * rkey_buffer;
   void * remote_addr;
-  struct mpmc_queue * cq;
+  struct ucx_cq * cq;
   uint64_t wr_id;
 };  
 
@@ -486,21 +486,29 @@ ucx_device_connect_to (
  */
 
 struct cb_rdma_write_complete_user_data {
-  struct mpmc_queue * cq;
+  struct ucx_cq * cq;
   uint64_t wr_id;
 };
 
+
+
+static inline
+int
+ucx_cq_enqueue (struct ucx_cq * cq, struct ucx_wc wc)
+{
+  return plqueue_sp_enqueue_cq (
+    cq->log2_num_entries, cq->entries, &cq->write_cursor, wc
+  );
+}
+
 static
 void
-enqueue_send_completion (struct mpmc_queue * cq, uint64_t wr_id)
+enqueue_send_completion (struct ucx_cq * cq, uint64_t wr_id)
 {
-  struct ucx_wc * wc = malloc (sizeof (struct ucx_wc));
-  *wc = (struct ucx_wc) {
+  (void) ucx_cq_enqueue (cq, (struct ucx_wc) {
     .status = UCX_WC_SUCCESS, /* TODO: Might also be an error! */
     .wr_id = wr_id
-  };
-
-  (void) alf_enqueue (cq, (struct alf_tag_payload_pair) { .payload = (uintptr_t) wc });
+  });
 }
 
 static
@@ -529,7 +537,7 @@ void
 do_rdma_write (
   struct ucx_device * ucx_device, void * local_addr, int length, int dst,
   void * rkey_buffer, uint64_t remote_addr,
-  struct mpmc_queue * cq, uint64_t wr_id
+  struct ucx_cq * cq, uint64_t wr_id
 )
 {
   fprintf (
@@ -597,7 +605,7 @@ err:
 ucx_device_status_t
 ucx_device_rdma_write (
   struct ucx_device * ucx_device, void * local_addr, int length, int dst,
-  void * rkey_buffer, void * remote_addr, struct mpmc_queue * cq, uint64_t wr_id
+  void * rkey_buffer, void * remote_addr, struct ucx_cq * cq, uint64_t wr_id
 )
 {
   struct ucx_device_msg_rdma_write_data * d =
@@ -642,17 +650,9 @@ err:
   fprintf (stderr, "qp rdma write resulted in an error\n");
 }
 
-static
-void
-enqueue_wc (struct mpmc_queue * cq, struct ucx_wc * wc)
-{
-  struct ucx_wc * p = malloc (sizeof (struct ucx_wc));
-  *p = *wc;
-  (void) alf_enqueue (cq, (struct alf_tag_payload_pair) { .payload = (uintptr_t) p });
-}
 
 struct cb_enqueue_wc_and_free_request_user_data {
-  struct mpmc_queue * cq;
+  struct ucx_cq * cq;
   uint64_t wr_id;
 };
 
@@ -660,9 +660,10 @@ static
 void
 cb_enqueue_wc_and_free_request (void * request, ucs_status_t status, void * user_data)
 {
+  /* TO DO: Handle error */
   struct cb_enqueue_wc_and_free_request_user_data * ud =
    (struct cb_enqueue_wc_and_free_request_user_data *) user_data;
-  enqueue_wc (ud->cq, & (struct ucx_wc) {
+  ucx_cq_enqueue (ud->cq, (struct ucx_wc) {
     .status = status == UCS_OK ? UCX_WC_SUCCESS : UCX_WC_ERR,
     .wr_id = ud->wr_id
   });
@@ -731,7 +732,7 @@ do_qp_rdma_write (
   );
   if (request_put == UCS_OK)
   {
-    enqueue_wc (qp->cq, & (struct ucx_wc) { .status = UCX_WC_SUCCESS, .wr_id = el->wr_id });
+    ucx_cq_enqueue (qp->cq, (struct ucx_wc) { .status = UCX_WC_SUCCESS, .wr_id = el->wr_id });
     free (ud);
   }
   else if (UCS_PTR_IS_ERR(request_put))
@@ -1026,8 +1027,7 @@ ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t hos
     .ucp_worker = ucp_worker,
     .host_port = host_port,
     .queue = (struct mpmc_queue) {0},
-    .endpoints = ep_registry,
-    .scqGroups = (struct mpmc_queue) {0}
+    .endpoints = ep_registry
   };
 
   return UCX_DEVICE_OK;

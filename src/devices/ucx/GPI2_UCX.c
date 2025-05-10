@@ -115,6 +115,24 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
   if (!ucx_dev_ctx) goto err_alloc_gctx_device_ctx;
   gctx->device->ctx = ucx_dev_ctx;
 
+  if (!ucx_init_cq (&ucx_dev_ctx->scqGroups, gctx->config->queue_size_max))
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to create CQ (ucx_init_cq)");
+    return -1;
+  }
+
+  /* One-sided Communication */
+  for (unsigned int c = 0; c < gctx->config->queue_num; c++)
+  {
+    /* TO DO: Calculate log2(queue size) here? */
+    if (!ucx_init_cq (&ucx_dev_ctx->scqC[c], gctx->config->queue_size_max))
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to create CQ (ucx_init_cq)");
+      return -1;
+    }
+  }
+
+
   for (unsigned int c = 0; c < gctx->config->queue_num; c++)
   {
     ucx_dev_ctx->qpC[c] =

@@ -39,7 +39,7 @@ pgaspi_dev_post_group_write (gaspi_context_t * const gctx,
   if (ucx_device_rdma_write (
     &ucx_device_ctx->ucx_device, local_addr, length, dst,
     gctx->groups[group].rrcd[gctx->rank].mr[0].rkey_buffer, remote_addr,
-    &ucx_device_ctx->ucx_device.scqGroups, dst
+    &ucx_device_ctx->scqGroups, dst
   ) != UCX_DEVICE_OK)
   {
     fprintf (stderr, "ucx_device_rdma_write failed\n");
@@ -81,7 +81,7 @@ pgaspi_dev_poll_groups (gaspi_context_t * const gctx)
 {
   gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   
-  int ret = ucx_poll_cq (&ucx_dev_ctx->ucx_device.scqGroups, gctx->ne_count_grp,
+  int ret = ucx_poll_cq (&ucx_dev_ctx->scqGroups, gctx->ne_count_grp,
     ucx_dev_ctx->wc_grp_send);
   
   if (ret < 0)

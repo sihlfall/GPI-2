@@ -3,6 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define PLQUEUE_NAME cq
+#define PLQUEUE_PAYLOAD_TYPE struct ucx_wc
+#include "plqueue.incl.c"
+#undef PLQUEUE_NAME
+#undef PLQUEUE_PAYLOAD_TYPE
+
+
 struct ucx_qp *
 ucx_qp_create (struct ucx_qp_init_attr * attr) {
   struct ucx_qp * qp = calloc (1, sizeof (struct ucx_qp));
@@ -39,18 +46,41 @@ ucx_qp_post_send (
   ucx_device_qp_rdma_write (ucx_device, qp);
 }
 
+static inline
 int
-ucx_poll_cq (struct mpmc_queue * cq, uint32_t num_entries, struct ucx_wc * wc)
+ceil_log2(unsigned int x) {
+  return x == 0 ? 0 : 32 - __builtin_clz(x - 1);
+}
+
+int
+ucx_init_cq (struct ucx_cq * cq, unsigned int capacity)
+{
+  int log2_actual_capacity = ceil_log2 (capacity);
+  if (log2_actual_capacity >= 32) return 0;
+  size_t actual_capacity = (size_t)1 << log2_actual_capacity;
+  struct plqueue_cq_entry * entries = calloc(actual_capacity, sizeof (cq->entries[0]));
+  if (!entries) return 0;
+  *cq = (struct ucx_cq) {
+    .log2_num_entries = log2_actual_capacity,
+    .entries = entries
+  };
+  return 1;
+}
+
+int
+ucx_poll_cq (struct ucx_cq * cq, uint32_t num_entries, struct ucx_wc * wc)
 {
   uint32_t i = 0;
   while (1) {
     if (i >= num_entries) break;
-    struct alf_tag_payload_pair d;
-    int ret = alf_dequeue (cq, &d);
-    if (!ret) return 0;
-    struct ucx_wc * p = (struct ucx_wc *) d.payload;
-    wc[i++] = *p;
-    free (p);
+    fprintf (stderr, "Calling dequeue\n");
+    fprintf (stderr, "cq: %p\n", cq);
+    fprintf (stderr, "%u %p\n", cq->log2_num_entries, cq->entries);
+    struct plqueue_maybe_payload_cq mp = plqueue_mc_dequeue_cq (
+      cq->log2_num_entries, cq->entries, &cq->read_cursor
+    );
+    if (!mp.has_value) return 0;
+    wc[i++] = mp.payload;
   }
   return i;
 }

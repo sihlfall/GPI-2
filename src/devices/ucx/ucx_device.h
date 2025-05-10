@@ -62,8 +62,10 @@ struct ucx_device {
   ucp_context_h ucp_ctx;
   struct mpmc_queue queue;
   struct ucx_device_endpoints * endpoints;
-  struct mpmc_queue scqGroups;
+  //struct mpmc_queue scqGroups;
 };
+
+struct ucx_cq;
 
 ucx_device_status_t ucx_device_init (
   struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port
@@ -78,7 +80,7 @@ ucx_device_status_t ucx_device_connect_to (
 ucx_device_status_t ucx_device_rdma_write (
   struct ucx_device * ucx_device, void * local_addr, int length, int dst,
   void * rkey_buffer, void * remote_addr,
-  struct mpmc_queue * cq, uint64_t wr_id
+  struct ucx_cq * cq, uint64_t wr_id
 );
 
 struct ucx_qp;

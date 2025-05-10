@@ -10,7 +10,8 @@
             "defines": [
                 "GPI2_DEVICE_UCX",
                 "PLQUEUE_PAYLOAD_TYPE=uint64_t",
-                "PLQUEUE_NAME=dummy"
+                "PLQUEUE_NAME=dummy",
+                "FOR_INTELLISENSE_ONLY"
             ],
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",

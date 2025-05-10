@@ -5,7 +5,9 @@
 #error "PLQUEUE_NAME not defined"
 #endif
 
+#ifdef FOR_INTELLISENSE_ONLY
 #include "plqueue.incl.h"
+#endif
 
 #include <stdatomic.h>
 #include <stddef.h>

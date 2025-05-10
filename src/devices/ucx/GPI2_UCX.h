@@ -13,7 +13,8 @@ typedef struct
   struct ucx_device ucx_device;
   struct ucx_wc wc_grp_send[64];
   struct ucx_qp **qpC[GASPI_MAX_QP];
-  struct mpmc_queue scqC[GASPI_MAX_QP];
+  struct ucx_cq scqC[GASPI_MAX_QP];
+  struct ucx_cq scqGroups;
 } gaspi_ucx_ctx;
 
 #endif //_GPI2_UCX_H_
