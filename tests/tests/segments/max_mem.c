@@ -1,5 +1,7 @@
 #include <test_utils.h>
 
+gaspi_size_t gaspi_get_system_mem (void);
+
 /* Test allocates 45% of system memory and creates a segment that
    large or if several ranks per node exist, divided among that
    number */

@@ -177,7 +177,7 @@ pgaspi_dev_write_notify (
         gctx->rrmd[segment_id_local][gctx->rank].data.addr + offset_local
       ),
       .length = size,
-      .mem_h = gctx->rrmd[segment_id_local][gctx->rank].mr[0].mem_h
+      .mem_h = (uint64_t)gctx->rrmd[segment_id_local][gctx->rank].mr[0].mem_h
     },
     .wr = {
       .rdma = {
@@ -204,7 +204,7 @@ pgaspi_dev_write_notify (
     .sge = (struct ucx_sge) {
       .addr = (uintptr_t) notification_ptr,
       .length = sizeof (gaspi_notification_t),
-      .mem_h = gctx->nsrc.mr[1].mem_h
+      .mem_h = (uint64_t)gctx->nsrc.mr[1].mem_h
     },
     .wr = {
       .rdma = {
@@ -223,7 +223,7 @@ pgaspi_dev_write_notify (
   gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   struct ucx_send_wr * bad_wr;
 
-  fprintf (stderr, "Write request (rkey buffer size): %d\n", swr.wr.rdma.rkey_buffer_size);
+  fprintf (stderr, "Write request (rkey buffer size): %lu\n", swr.wr.rdma.rkey_buffer_size);
   // TODO: function should return status code, and then we should have an if here
   ucx_qp_post_send (
     &ucx_dev_ctx->ucx_device,

@@ -264,13 +264,19 @@ gaspi_sn_connect2port (const char *const hn, const unsigned short port,
   const useconds_t max_backoff = 1000000;
   useconds_t cur_backoff = 1000;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"      
   ftime (&t0);
+#pragma GCC diagnostic pop
 
   while (-1 == sockfd)
   {
     sockfd = gaspi_sn_connect2port_intern (hn, port);
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"        
     ftime (&t1);
+#pragma GCC diagnostic pop
     const unsigned int delta_ms =
       (t1.time - t0.time) * 1000 + (t1.millitm - t0.millitm);
 
@@ -708,7 +714,10 @@ gaspi_sn_connect_to_rank (const gaspi_rank_t rank,
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
   struct timeb t0, t1;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"    
   ftime (&t0);
+#pragma GCC diagnostic pop
 
 #ifdef DEBUG
   if (strcmp (pgaspi_gethostname (rank), "") == 0)
@@ -732,7 +741,10 @@ gaspi_sn_connect_to_rank (const gaspi_rank_t rank,
 
     if (-1 == gctx->sockfd[rank])
     {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"          
       ftime (&t1);
+#pragma GCC diagnostic pop
       const unsigned int delta_ms =
         (t1.time - t0.time) * 1000 + (t1.millitm - t0.millitm);
 
@@ -987,7 +999,6 @@ gaspi_sn_allgather_dynamic (
     return GPI2_SN_ERROR;
   }
 
-  size_t actual_size = 0;
   {
     size_t dyn_size = get_dynamic_data_size (src);
     size_t actual_size = size + dyn_size;
@@ -1246,7 +1257,9 @@ create_segment_register_cd_header (gaspi_rc_mseg_t * segment, int segment_id, in
     .data_rkey_buffer_size = data_rkey_buffer_size,
     .notif_rkey_buffer_size = notif_rkey_buffer_size  
   };
-  fprintf ("Creating seg reg cd header with rkey_buffer %p\n", segment->mr[0].rkey_buffer);
+  fprintf (stderr,
+    "Creating seg reg cd header with rkey_buffer %p\n", segment->mr[0].rkey_buffer
+  );
   memcpy (&h->rkeys_buffer[0], segment->mr[0].rkey_buffer, data_rkey_buffer_size);
   memcpy (&h->rkeys_buffer[data_rkey_buffer_size],
     segment->mr[1].rkey_buffer, notif_rkey_buffer_size
@@ -1386,7 +1399,10 @@ _gaspi_sn_group_check (const gaspi_rank_t rank,
 
   struct timeb t0, t1;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"      
   ftime (&t0);
+#pragma GCC diagnostic pop
 
   struct gaspi_cd_header cdh;
 
@@ -1424,7 +1440,10 @@ _gaspi_sn_group_check (const gaspi_rank_t rank,
 
     if ((rem_gb.ret < 0) || (gb->cs != rem_gb.cs))
     {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"    
       ftime (&t1);
+#pragma GCC diagnostic pop
       const unsigned int delta_ms =
         (t1.time - t0.time) * 1000 + (t1.millitm - t0.millitm);
       if (delta_ms > timeout_ms)
@@ -1491,7 +1510,7 @@ _gaspi_sn_group_connect (const gaspi_rank_t rank, const void *const arg)
 
 #ifdef GPI2_DEVICE_UCX
   _Alignas(struct gaspi_mseg_exch_info) unsigned char info_buffer[sizeof (struct gaspi_mseg_exch_info)];
-  struct gaspi_mseg_exch_info * info = &info_buffer[0];
+  struct gaspi_mseg_exch_info * info = (struct gaspi_mseg_exch_info *) &info_buffer[0];
   fprintf(stderr, "Check 1\n");
   ssize_t rret;
   rret = gaspi_sn_readn (

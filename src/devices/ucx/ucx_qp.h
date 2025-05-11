@@ -87,7 +87,7 @@ struct ucx_device;
 struct ucx_qp * ucx_qp_create (struct ucx_qp_init_attr * attr);
 void ucx_qp_post_send (
   struct ucx_device * ucx_device, struct ucx_qp * qp, struct ucx_send_wr * wr,
-  struct ucx_send_wr * bad_wr
+  struct ucx_send_wr ** bad_wr
 );
 int ucx_init_cq (struct ucx_cq * cq, unsigned int capacity);
 int ucx_poll_cq (struct ucx_cq * cq, uint32_t num_entries, struct ucx_wc * wc);

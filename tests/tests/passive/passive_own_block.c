@@ -33,7 +33,10 @@ main (int argc, char *argv[])
 
   ASSERT (gaspi_proc_init (GASPI_BLOCK));
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"  
   ASSERT (gaspi_threads_init_user (2));
+#pragma GCC diagnostic pop
 
   int tid;
 
@@ -55,7 +58,10 @@ main (int argc, char *argv[])
 
   int_GlbMem = (int *) _vptr;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"    
   ASSERT (gaspi_threads_run (recvThread, int_GlbMem));
+#pragma GCC diagnostic pop
 
   int_GlbMem[0] = 11223344;
 

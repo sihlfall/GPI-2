@@ -130,6 +130,8 @@ gaspi_threads_init_user (const unsigned int use_nr_of_threads)
   return GASPI_SUCCESS;
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"    
 
 gaspi_return_t
 gaspi_threads_init (gaspi_int * const num)
@@ -148,6 +150,7 @@ gaspi_threads_init (gaspi_int * const num)
     return ret;
 }
 
+#pragma GCC diagnostic pop
 
 //TODO: what do we do with existing threads
 gaspi_return_t

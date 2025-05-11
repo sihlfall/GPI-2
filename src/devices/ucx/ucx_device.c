@@ -288,7 +288,7 @@ on_am_huhu (
   gaspi_rank_t * our_rank = &ucx_device->rank;
 
   fprintf (stderr, "Received a HUHU.\n");
-  fprintf (stderr, "Received header length: %llu\n", header_length);
+  fprintf (stderr, "Received header length: %lu\n", header_length);
   fprintf (stderr, "Received rank: %u\n", (unsigned int) peer_rank);
 
   if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))
@@ -719,7 +719,7 @@ do_qp_rdma_write (
     .wr_id = wr.wr_id
   };
   ucs_status_ptr_t request_put = ucp_put_nbx (
-    ep, wr.sge.addr, wr.sge.length,
+    ep, (void *)wr.sge.addr, wr.sge.length,
     wr.wr.rdma.remote_addr, rkey_handle,
     & (ucp_request_param_t) {
       .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,

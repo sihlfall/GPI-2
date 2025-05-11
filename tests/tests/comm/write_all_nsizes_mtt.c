@@ -58,7 +58,10 @@ main (int argc, char *argv[])
 
   int num_threads = 0;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"      
   ASSERT (gaspi_threads_init (&num_threads));
+#pragma GCC diagnostic pop
 
   ASSERT (gaspi_proc_num (&numranks));
   ASSERT (gaspi_proc_rank (&myrank));
@@ -66,11 +69,14 @@ main (int argc, char *argv[])
   ASSERT (gaspi_segment_create
           (0, _2GB, GASPI_GROUP_ALL, GASPI_BLOCK, GASPI_MEM_INITIALIZED));
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"              
   int i;
   for (i = 1; i < num_threads; i++)
   {
     ASSERT (gaspi_threads_run (thread_fun, NULL));
   }
+#pragma GCC diagnostic pop
 
   thread_fun (NULL);
 

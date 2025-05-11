@@ -33,7 +33,7 @@ ucx_qp_create (struct ucx_qp_init_attr * attr) {
 void
 ucx_qp_post_send (
   struct ucx_device * ucx_device,
-  struct ucx_qp * qp, struct ucx_send_wr * wr, struct ucx_send_wr * bad_wr
+  struct ucx_qp * qp, struct ucx_send_wr * wr, struct ucx_send_wr ** bad_wr
 )
 {
   struct ucx_sq * sq = &qp->sq;

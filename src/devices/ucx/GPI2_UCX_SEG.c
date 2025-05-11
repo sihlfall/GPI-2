@@ -44,7 +44,7 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
   seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
   seg->mr[1] = (struct gaspi_rc_mseg_mr) {0};
 
-  fprintf (stderr, "address: %llu, length: %llu\n", seg->data.buf, seg->size);
+  fprintf (stderr, "address: %p, length: %lu\n", seg->data.buf, seg->size);
   ucp_mem_h data_memh;
   {
     if (ucp_mem_map (
