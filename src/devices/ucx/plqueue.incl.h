@@ -21,8 +21,11 @@
  * bits (log2_capacity + 2) to 63: seq
  */
 
+#ifndef PLQUEUE_CURSOR_TYPES_DECLARED_
+#define PLQUEUE_CURSOR_TYPES_DECLARED_
 typedef uint64_t plqueue_s_cursor_t;
 typedef struct { _Atomic uint64_t v; } plqueue_m_cursor_t; /* struct for type safety */
+#endif
 
 #define CONCAT(a, b) a##b
 #define EXPAND_CONCAT(a, b) CONCAT(a, b)

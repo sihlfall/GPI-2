@@ -28,6 +28,7 @@ pgaspi_dev_create_endpoint (
   {
     struct ucx_qp * qp = ucx_qp_create (& (struct ucx_qp_init_attr) {
       .dst = i,
+      .queue_size_max = gctx->config->queue_size_max,
       .cq = &ucx_device_ctx->scqC[c]
     });
     if (!qp)

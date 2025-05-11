@@ -172,14 +172,13 @@ pgaspi_dev_write_notify (
   swr = (struct ucx_send_wr) {
     .wr_id = rank,
     .next = &swrN,
-    .sg_list = & (struct ucx_sge) {
+    .sge = (struct ucx_sge) {
       .addr = (uintptr_t) (
         gctx->rrmd[segment_id_local][gctx->rank].data.addr + offset_local
       ),
       .length = size,
       .mem_h = gctx->rrmd[segment_id_local][gctx->rank].mr[0].mem_h
     },
-    .num_sge = 1,
     .wr = {
       .rdma = {
         .remote_addr = gctx->rrmd[segment_id_remote][rank].data.addr + offset_remote,
@@ -202,12 +201,11 @@ pgaspi_dev_write_notify (
   swrN = (struct ucx_send_wr) {
     .wr_id = rank,
     .next = NULL,
-    .sg_list = & (struct ucx_sge) {
+    .sge = (struct ucx_sge) {
       .addr = (uintptr_t) notification_ptr,
       .length = sizeof (gaspi_notification_t),
       .mem_h = gctx->nsrc.mr[1].mem_h
     },
-    .num_sge = 1,
     .wr = {
       .rdma = {
         .remote_addr = gctx->rrmd[segment_id_remote][rank].notif_spc.addr +

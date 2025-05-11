@@ -42,14 +42,27 @@ union ucx_rdma_union {
 struct ucx_send_wr {
   uint64_t wr_id;
   struct ucx_send_wr * next;
-  struct ucx_sge * sg_list;
-  uint64_t num_sge;
+  struct ucx_sge sge;
   union ucx_rdma_union wr;
+};
+
+#define PLQUEUE_NAME sq
+#define PLQUEUE_PAYLOAD_TYPE struct ucx_send_wr
+#include "plqueue.incl.h"
+#undef PLQUEUE_NAME
+#undef PLQUEUE_PAYLOAD_TYPE
+
+struct ucx_sq {
+  int log2_num_entries;
+  struct plqueue_sq_entry * entries;
+  _Alignas(64) plqueue_m_cursor_t write_cursor;
+  _Alignas(64) plqueue_s_cursor_t read_cursor;
 };
 
 struct ucx_qp_init_attr {
   //ucp_ep_h ep;
   int dst;
+  unsigned int queue_size_max;
   struct ucx_cq * cq;
 };
 
@@ -58,7 +71,7 @@ struct ucx_qp {
   //ucp_ep_h ep;
   int dst; /* TODO: Separate ep later? */
   struct ucx_cq * cq;
-  struct mpmc_queue sq;
+  struct ucx_sq sq;
 };
 
 /* TODO: internal, move out of here */
@@ -78,6 +91,7 @@ void ucx_qp_post_send (
 );
 int ucx_init_cq (struct ucx_cq * cq, unsigned int capacity);
 int ucx_poll_cq (struct ucx_cq * cq, uint32_t num_entries, struct ucx_wc * wc);
+int ucx_init_sq (struct ucx_sq * sq, unsigned int capacity);
 
 
 #endif

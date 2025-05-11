@@ -9,11 +9,22 @@
 #undef PLQUEUE_NAME
 #undef PLQUEUE_PAYLOAD_TYPE
 
+#define PLQUEUE_NAME sq
+#define PLQUEUE_PAYLOAD_TYPE struct ucx_send_wr
+#include "plqueue.incl.c"
+#undef PLQUEUE_NAME
+#undef PLQUEUE_PAYLOAD_TYPE
+
 
 struct ucx_qp *
 ucx_qp_create (struct ucx_qp_init_attr * attr) {
   struct ucx_qp * qp = calloc (1, sizeof (struct ucx_qp));
   if (!qp) return NULL;
+  if (!ucx_init_sq (&qp->sq, attr->queue_size_max))
+  {
+    free (qp);
+    return NULL;
+  }
   qp->dst = attr->dst;
   qp->cq = attr->cq;
   return qp;
@@ -25,22 +36,13 @@ ucx_qp_post_send (
   struct ucx_qp * qp, struct ucx_send_wr * wr, struct ucx_send_wr * bad_wr
 )
 {
+  struct ucx_sq * sq = &qp->sq;
   for (struct ucx_send_wr * current = wr; current; current = current->next)
   {
-    uint64_t num_sge = current->num_sge;
-    struct qp_queue_element * el = calloc(1,
-      sizeof (struct qp_queue_element) + num_sge * sizeof (struct ucx_sge)
-    );
-    el->wr_id = current->wr_id;
-    el->num_sge = num_sge;
-    el->wr = current->wr;
-    memcpy (el->sg_list, current->sg_list, num_sge * sizeof (struct ucx_sge));
-
     /* TODO: handle errors */
-    alf_enqueue (&qp->sq, (struct alf_tag_payload_pair) {
-      .tag = 0,
-      .payload = (uintptr_t) el
-    });
+    plqueue_mp_enqueue_sq (
+      sq->log2_num_entries, sq->entries, &sq->write_cursor, *current
+    );
   }
 
   ucx_device_qp_rdma_write (ucx_device, qp);
@@ -83,4 +85,19 @@ ucx_poll_cq (struct ucx_cq * cq, uint32_t num_entries, struct ucx_wc * wc)
     wc[i++] = mp.payload;
   }
   return i;
+}
+
+int
+ucx_init_sq (struct ucx_sq * sq, unsigned int capacity)
+{
+  int log2_actual_capacity = ceil_log2 (capacity);
+  if (log2_actual_capacity >= 32) return 0;
+  size_t actual_capacity = (size_t)1 << log2_actual_capacity;
+  struct plqueue_sq_entry * entries = calloc(actual_capacity, sizeof (sq->entries[0]));
+  if (!entries) return 0;
+  *sq = (struct ucx_sq) {
+    .log2_num_entries = log2_actual_capacity,
+    .entries = entries
+  };
+  return 1;
 }

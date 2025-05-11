@@ -678,13 +678,16 @@ do_qp_rdma_write (
 )
 {
   fprintf (stderr, "do_qp_rdma_write called\n");
-  struct alf_tag_payload_pair d;
-  if (!alf_dequeue (&qp->sq, &d))
+  struct ucx_sq * sq = &qp->sq;
+  struct plqueue_maybe_payload_sq mp = plqueue_sc_dequeue_sq (
+    sq->log2_num_entries, sq->entries, &sq->read_cursor
+  );
+  if (!mp.has_value)
   {
     fprintf (stderr, "Info: Send queue empty\n");
     return;
   }
-  struct qp_queue_element * el = (struct qp_queue_element *) d.payload;
+  struct ucx_send_wr wr = mp.payload;
   int dst = qp->dst;
   struct ucx_device_ep_entry * ep_entry = &ucx_device->endpoints->ary[dst];
   if (ep_entry->status != ucx_device_endpoint_ok)
@@ -694,18 +697,12 @@ do_qp_rdma_write (
   }
   ucp_ep_h ep = ep_entry->ep;
 
-  if (el->num_sge != 1)
-  {
-    fprintf (stderr, "Multiple sges not supported yet\n");
-    goto err;
-  }
-
-  fprintf (stderr, "Here! Rkey buffer: %p\n", el->wr.rdma.rkey_buffer);
+  fprintf (stderr, "Here! Rkey buffer: %p\n", wr.wr.rdma.rkey_buffer);
 
   ucp_rkey_h rkey_handle;
   {
     if (ucp_ep_rkey_unpack (
-      ep, el->wr.rdma.rkey_buffer, &rkey_handle
+      ep, wr.wr.rdma.rkey_buffer, &rkey_handle
     ) != UCS_OK)
     {
       fprintf (stderr, "Could not unpack rkey handle\n");
@@ -719,11 +716,11 @@ do_qp_rdma_write (
     malloc (sizeof (struct cb_enqueue_wc_and_free_request_user_data));
   *ud = (struct cb_enqueue_wc_and_free_request_user_data) {
     .cq = qp->cq,
-    .wr_id = el->wr_id
+    .wr_id = wr.wr_id
   };
   ucs_status_ptr_t request_put = ucp_put_nbx (
-    ep, el->sg_list[0].addr, el->sg_list[0].length,
-    el->wr.rdma.remote_addr, rkey_handle,
+    ep, wr.sge.addr, wr.sge.length,
+    wr.wr.rdma.remote_addr, rkey_handle,
     & (ucp_request_param_t) {
       .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_USER_DATA,
       .cb = { .send = cb_enqueue_wc_and_free_request },
@@ -732,7 +729,7 @@ do_qp_rdma_write (
   );
   if (request_put == UCS_OK)
   {
-    ucx_cq_enqueue (qp->cq, (struct ucx_wc) { .status = UCX_WC_SUCCESS, .wr_id = el->wr_id });
+    ucx_cq_enqueue (qp->cq, (struct ucx_wc) { .status = UCX_WC_SUCCESS, .wr_id = wr.wr_id });
     free (ud);
   }
   else if (UCS_PTR_IS_ERR(request_put))

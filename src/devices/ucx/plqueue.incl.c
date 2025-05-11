@@ -26,6 +26,9 @@
   EXPAND_CONCAT(struct plqueue_maybe_payload_,PLQUEUE_NAME)
 #define PLQUEUE_FN(proc) EXPAND_CONCAT3(plqueue_,proc,EXPAND_CONCAT(_,PLQUEUE_NAME))
 
+#ifndef PLQUEUE_INLINE_STATIC_CURSOR_FUNCTIONS_DEFINED_
+#define PLQUEUE_INLINE_STATIC_CURSOR_FUNCTIONS_DEFINED_
+
 static inline
 void
 cpu_pause (int * pausecnt)
@@ -72,6 +75,7 @@ m_reload_or_advance_cursor (
   }
 }
 
+#endif /* PLQUEUE_INLINE_STATIC_CURSOR_FUNCTIONS_DEFINED_ */
 /* write_cursor must be a multiple of 4 (last two bits not set) */
 /* returns 1 if successful, 0 if not */
 int
