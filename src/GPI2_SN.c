@@ -856,7 +856,7 @@ _gaspi_sn_single_command (const gaspi_rank_t rank, const enum gaspi_sn_ops op)
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u  (%d %p %lu)",
                              rank,
-                             gctx->sockfd[rank], &cdh,
+                             gctx->sockfd[rank], (void *) &cdh,
                              sizeof (struct gaspi_cd_header));
     return GPI2_SN_ERROR;
   }
@@ -1291,7 +1291,7 @@ _gaspi_sn_segment_register_command (const gaspi_rank_t rank,
       GASPI_DEBUG_PRINT_ERROR ("Failed to write to rank %u (args: %d %p %lu)",
                               rank,
                               gctx->sockfd[rank],
-                              h, hsz);
+                              (void *) h, hsz);
       free (h);
       return GPI2_SN_ERROR;
     }
@@ -1335,7 +1335,7 @@ _gaspi_sn_segment_register_command (const gaspi_rank_t rank,
   if (rret != sizeof (int))
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to read from rank %u (args: %d %p %lu)",
-                             rank, gctx->sockfd[rank], &rret, sizeof (int));
+                             rank, gctx->sockfd[rank], (void *) &rret, sizeof (int));
     return GPI2_SN_ERROR;
   }
 
@@ -1368,7 +1368,7 @@ _gaspi_sn_ping_command (const gaspi_rank_t rank)
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to rank %u (args: %d %p %lu)",
                              rank,
                              gctx->sockfd[rank],
-                             &cdh, sizeof (struct gaspi_cd_header));
+                             (void *) &cdh, sizeof (struct gaspi_cd_header));
     return GPI2_SN_ERROR;
   }
 
@@ -1378,7 +1378,7 @@ _gaspi_sn_ping_command (const gaspi_rank_t rank)
   if (rret != sizeof (int))
   {
     GASPI_DEBUG_PRINT_ERROR ("Failed to read from rank %u (args: %d %p %lu)",
-                             rank, gctx->sockfd[rank], &rret, sizeof (int));
+                             rank, gctx->sockfd[rank], (void *) &rret, sizeof (int));
     return GPI2_SN_ERROR;
   }
 
@@ -1424,7 +1424,7 @@ _gaspi_sn_group_check (const gaspi_rank_t rank,
     {
       GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u (%d %p %lu)",
                                rank,
-                               gctx->sockfd[i], &cdh,
+                               gctx->sockfd[i], (void *) &cdh,
                                sizeof (struct gaspi_cd_header));
       return 1;
     }
@@ -1434,7 +1434,7 @@ _gaspi_sn_group_check (const gaspi_rank_t rank,
     if (rret != sizeof (rem_gb))
     {
       GASPI_DEBUG_PRINT_ERROR ("Failed to read from %u (%d %p %lu)",
-                               i, gctx->sockfd[i], &rem_gb, sizeof (rem_gb));
+                               i, gctx->sockfd[i], (void *) &rem_gb, sizeof (rem_gb));
       return 1;
     }
 
@@ -1504,7 +1504,7 @@ _gaspi_sn_group_connect (const gaspi_rank_t rank, const void *const arg)
     GASPI_DEBUG_PRINT_ERROR ("Failed to write to %u (%ld %d %p %lu)",
                              i,
                              ret,
-                             gctx->sockfd[i], &cdh, sizeof (struct gaspi_cd_header));
+                             gctx->sockfd[i], (void *) &cdh, sizeof (struct gaspi_cd_header));
     return GPI2_SN_ERROR;
   }
 
@@ -1522,7 +1522,7 @@ _gaspi_sn_group_connect (const gaspi_rank_t rank, const void *const arg)
       i,
       rret,
       gctx->sockfd[i],
-      info,
+      (void *) info,
       sizeof (struct gaspi_mseg_exch_info)
     );
     return GPI2_SN_ERROR;

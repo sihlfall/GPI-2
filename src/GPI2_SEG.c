@@ -261,7 +261,7 @@ pgaspi_segment_alloc_maybe (gaspi_segment_id_t const segment_id,
 
   myrank_mseg->data.ptr = myrank_mseg->user_provided
     ? pointer
-    : myrank_mseg->notif_spc.ptr + notifications_space_size;
+    : myrank_mseg->notif_spc.buf + notifications_space_size;
 
   myrank_mseg->size = size;
   myrank_mseg->notif_spc_size = notifications_space_size;

@@ -76,8 +76,8 @@ ucx_poll_cq (struct ucx_cq * cq, uint32_t num_entries, struct ucx_wc * wc)
   while (1) {
     if (i >= num_entries) break;
     fprintf (stderr, "Calling dequeue\n");
-    fprintf (stderr, "cq: %p\n", cq);
-    fprintf (stderr, "%u %p\n", cq->log2_num_entries, cq->entries);
+    fprintf (stderr, "cq: %p\n", (void *) cq);
+    fprintf (stderr, "%u %p\n", cq->log2_num_entries, (void *) cq->entries);
     struct plqueue_maybe_payload_cq mp = plqueue_mc_dequeue_cq (
       cq->log2_num_entries, cq->entries, &cq->read_cursor
     );

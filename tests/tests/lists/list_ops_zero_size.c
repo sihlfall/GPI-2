@@ -90,7 +90,7 @@ comm_list_with_one_elem_with_nonzero_size (struct segs_offsets_list* l,
 {
   gaspi_number_t n = elem;
 
-  return comm_list_with_n_elems_with_nonzero_size (l, 1, &n);
+  comm_list_with_n_elems_with_nonzero_size (l, 1, &n);
 }
 
 gaspi_rank_t
@@ -201,13 +201,13 @@ assert_n_write_elem_are_set (gaspi_segment_id_t seg_id,
 void
 assert_single_read_elem_is_set (gaspi_segment_id_t seg_id, int nelems)
 {
-  return assert_n_read_elem_are_set (seg_id, nelems, 1);
+  assert_n_read_elem_are_set (seg_id, nelems, 1);
 }
 
 void
 assert_single_write_elem_is_set (gaspi_segment_id_t seg_id, int nelems)
 {
-  return assert_n_write_elem_are_set (seg_id, nelems, 1);
+  assert_n_write_elem_are_set (seg_id, nelems, 1);
 }
 
 void

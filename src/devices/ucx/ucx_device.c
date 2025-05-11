@@ -600,6 +600,7 @@ err_put_nbx:
   free (user_data);
   ucp_rkey_destroy (rkey_handle);
 err:
+  ;
 }
 
 ucx_device_status_t
@@ -772,6 +773,7 @@ err_flush_nbx:
   free (flush_user_data);
 err_put_nbx:
 err:
+  ;
 }
 
 ucx_device_status_t

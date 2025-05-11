@@ -6,7 +6,7 @@ AC_DEFUN([ACX_C],[
 	case "${CCLOC}" in
 	     gcc|clang)
 	        AC_SUBST([NON_MPI_CC],${CCLOC})
-		CFLAGS+=" -std=gnu11 -Wall"
+		CFLAGS+=" -std=gnu11 -Wall -Wpedantic"
 	  	;;
 	     mpicc)
 	        AS_IF([test "x${CCLOC}" = xmpicc],AC_SUBST([NON_MPI_CC],`mpicc --version | head -n 1 | { read first rest ; echo $first ; }`))
