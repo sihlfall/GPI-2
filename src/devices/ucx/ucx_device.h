@@ -62,6 +62,7 @@ struct ucx_device {
   ucp_context_h ucp_ctx;
   struct mpmc_queue queue;
   struct ucx_device_endpoints * endpoints;
+  struct mpmc_queue sn_queue; /* TODO: temporary hack */
   //struct mpmc_queue scqGroups;
 };
 
