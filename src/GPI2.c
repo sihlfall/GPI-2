@@ -37,6 +37,10 @@ along with GPI-2. If not, see <http://www.gnu.org/licenses/>.
 #include "GPI2_Utility.h"
 #include "GPI2_VERSION.h"
 
+#ifdef GPI2_DEVICE_UCX
+#include "GPI2_CommCtx.h"
+#endif
+
 gaspi_context_t glb_gaspi_ctx;
 
 #pragma weak gaspi_version  = pgaspi_version
@@ -304,6 +308,19 @@ pgaspi_proc_init (const gaspi_timeout_t timeout_ms)
       goto errL;
     }
 
+#ifdef GPI2_DEVICE_UCX
+    if (gaspiu_initialize_comm_ctx (gctx))
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to initialize communication context");
+      goto errL;
+    }
+    if (gaspiu_start_sn (gctx))
+    {
+      GASPI_DEBUG_PRINT_ERROR ("Failed to startup SN device context");
+      goto errL;
+    }
+#endif
+
     //start sn_backend
     if (pthread_create (&gctx->snt, NULL, gaspi_sn_backend, NULL) != 0)
     {
@@ -528,6 +545,10 @@ pgaspi_proc_term (const gaspi_timeout_t timeout)
     return GASPI_TIMEOUT;
   }
 
+#ifdef GPI2_DEVICE_UCX
+  (void) gaspiu_stop_sn (gctx);  
+#endif
+
   pthread_kill (gctx->snt, SIGSTKFLT);
 
   if (gctx->sockfd != NULL)
@@ -561,6 +582,10 @@ pgaspi_proc_term (const gaspi_timeout_t timeout)
   {
     goto errL;
   }
+
+#ifdef GPI2_DEVICE_UCX
+  (void) gaspiu_cleanup_comm_ctx (gctx);
+#endif
 
   gctx->init = 0;
 

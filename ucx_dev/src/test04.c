@@ -1,4 +1,5 @@
 #include "ucx_device.h"
+#include "GPI2_CommCtx.h"
 #include "GPI2_UCX.h"
 #include "GASPI.h"
 #include "ucp/api/ucp.h"
@@ -39,8 +40,20 @@ run (uint16_t base_port, gaspi_rank_t my_rank)
 {
   int ret = 0;
 
+  gaspi_context_t gctx;
+  if (gaspiu_initialize_comm_ctx (&gctx)) {
+    fprintf (stderr, "Could not initialize comm context\n");
+    ret = 1;
+    goto err_init_comm_ctx;
+  }
+  gaspi_ucx_ctx * ucx_ctx = gctx.device->ctx;
+
   struct ucx_device ucx_device;
-  if (ucx_device_init (&ucx_device, my_rank, base_port + my_rank) != UCX_DEVICE_OK) {
+  if (
+    ucx_device_init (
+      ucx_ctx->ucp_ctx, &ucx_device, my_rank, base_port + my_rank
+    ) != UCX_DEVICE_OK
+  ) {
     fprintf (stderr, "Could not create ucx_device\n");
     ret = 1;
     goto err_init_device;
@@ -73,6 +86,9 @@ err_start_device:
   fprintf (stderr, "Server stopped.\n");
 
 err_init_device:
+  gaspiu_cleanup_comm_ctx (&gctx);
+
+err_init_comm_ctx:
   return ret;
 }
 
@@ -80,7 +96,7 @@ static
 void
 abort_with_usage_message (void)
 {
-  fprintf(stderr, "Usage:\ntest04 base_port my_rank");
+  fprintf(stderr, "Usage:\ntest04 base_port my_rank\n");
   exit (1);
 }
 

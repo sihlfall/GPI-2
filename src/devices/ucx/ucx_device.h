@@ -2,6 +2,7 @@
 #define UCX_DEVICE_H_
 
 #include "mpmc_queue_struct.h"
+#include "ucx_device_sn_backend.h"
 
 #include "GASPI.h"
 #include "ucp/api/ucp.h"
@@ -59,7 +60,6 @@ struct ucx_device {
   ucp_worker_h ucp_worker;
   ucp_listener_h ucp_listener;
   uint16_t host_port;
-  ucp_context_h ucp_ctx;
   struct mpmc_queue queue;
   struct ucx_device_endpoints * endpoints;
   struct mpmc_queue sn_queue; /* TODO: temporary hack */
@@ -69,6 +69,7 @@ struct ucx_device {
 struct ucx_cq;
 
 ucx_device_status_t ucx_device_init (
+  ucp_context_h ucp_context,
   struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port
 );
 ucx_device_status_t ucx_device_start (struct ucx_device * ucx_device);

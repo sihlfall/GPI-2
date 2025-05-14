@@ -11,7 +11,7 @@ INC=-I/home/cluster/local/include -I./stub/include -I/home/cluster/local/include
 LIBS=/home/cluster/local/lib64/libGPI2.la
 OBJ_NAMES_GPI2UCX=GPI2_UCX_ATOMIC.o GPI2_UCX_GRP.o GPI2_UCX_IO.o \
   GPI2_UCX_PASSIVE.o GPI2_UCX_SEG.o GPI2_UCX.o \
-	ucx_device.o mpmc_queue.o
+	ucx_device.o mpmc_queue.o ucx_qp.o
 OBJ_NAMES_STUB=GPI2.o GPI2_Utility.o
 
 OBJS_GPI2UCX = $(addprefix $(BIN)/, $(OBJ_NAMES_GPI2UCX))

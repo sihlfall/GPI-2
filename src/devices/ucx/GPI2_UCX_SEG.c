@@ -48,7 +48,7 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
   ucp_mem_h data_memh;
   {
     if (ucp_mem_map (
-      ucx_device->ucp_ctx,
+      ucx_device_ctx->ucp_ctx,
       & (ucp_mem_map_params_t) {
         .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
         UCP_MEM_MAP_PARAM_FIELD_LENGTH | UCP_MEM_MAP_PARAM_FIELD_PROT |
@@ -70,7 +70,7 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
   void * data_rkey_buffer; size_t data_rkey_buffer_size;
   {
     if (ucp_rkey_pack (
-      ucx_device->ucp_ctx, data_memh, &data_rkey_buffer, &data_rkey_buffer_size
+      ucx_device_ctx->ucp_ctx, data_memh, &data_rkey_buffer, &data_rkey_buffer_size
     ) != UCS_OK)
     {
       fprintf (stderr, "Could not obtain remote handle\n");
@@ -83,7 +83,7 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
   ucp_mem_h notif_spc_memh;
   {
     if (ucp_mem_map (
-      ucx_device->ucp_ctx,
+      ucx_device_ctx->ucp_ctx,
       & (ucp_mem_map_params_t) {
         .field_mask = UCP_MEM_MAP_PARAM_FIELD_ADDRESS |
           UCP_MEM_MAP_PARAM_FIELD_LENGTH | UCP_MEM_MAP_PARAM_FIELD_PROT |
@@ -105,7 +105,7 @@ pgaspi_dev_register_mem (gaspi_context_t const *const gctx,
   void * notif_spc_rkey_buffer; size_t notif_spc_rkey_buffer_size;
   {
     if (ucp_rkey_pack (
-      ucx_device->ucp_ctx, notif_spc_memh, &notif_spc_rkey_buffer,
+      ucx_device_ctx->ucp_ctx, notif_spc_memh, &notif_spc_rkey_buffer,
       &notif_spc_rkey_buffer_size
     ) != UCS_OK)
     {
@@ -132,11 +132,11 @@ out:
   return 0;
 
 err_memh_pack_notif_spc_memh:
-  ucp_mem_unmap (ucx_device->ucp_ctx, notif_spc_memh);
+  ucp_mem_unmap (ucx_device_ctx->ucp_ctx, notif_spc_memh);
 err_mem_map_notif_spc_memh:
   ucp_rkey_buffer_release(data_rkey_buffer);
 err_memh_pack_memh:
-  ucp_mem_unmap (ucx_device->ucp_ctx, data_memh);
+  ucp_mem_unmap (ucx_device_ctx->ucp_ctx, data_memh);
 err_mem_map_data:
   return -1;
 }
@@ -151,13 +151,13 @@ pgaspi_dev_unregister_mem (gaspi_context_t const *const gctx,
   if (seg->mr[0].addr)
   {
     ucp_rkey_buffer_release (seg->mr[0].rkey_buffer);
-    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[0].mem_h);
+    ucp_mem_unmap (ucx_device_ctx->ucp_ctx, seg->mr[0].mem_h);
     seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
   }
   if (seg->mr[1].addr)
   {
     ucp_rkey_buffer_release (seg->mr[1].rkey_buffer);
-    ucp_mem_unmap (ucx_device->ucp_ctx, seg->mr[1].mem_h);
+    ucp_mem_unmap (ucx_device_ctx->ucp_ctx, seg->mr[1].mem_h);
     seg->mr[0] = (struct gaspi_rc_mseg_mr) {0};
   }
   return 0;

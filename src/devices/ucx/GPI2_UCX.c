@@ -2,6 +2,7 @@
 #include "ucx_device.h"
 #include "GASPI.h"
 #include "GPI2.h"
+#include "GPI2_CommCtx.h"
 #include "GPI2_Dev.h"
 #include "GPI2_SN.h"
 #include "GPI2_Utility.h"
@@ -107,14 +108,46 @@ pgaspi_dev_comm_queue_is_valid (
 }
 
 int
-pgaspi_dev_init_core (gaspi_context_t * const gctx)
+gaspiu_initialize_comm_ctx (gaspi_context_t * gctx)
 {
   gctx->device = calloc (1, sizeof (gctx->device));
   if (!gctx->device) goto err_alloc_gctx_device;
 
-  gaspi_ucx_ctx * ucx_dev_ctx = calloc (1, sizeof (gaspi_ucx_ctx));
-  if (!ucx_dev_ctx) goto err_alloc_gctx_device_ctx;
-  gctx->device->ctx = ucx_dev_ctx;
+  gaspi_ucx_ctx * ucx_ctx = calloc (1, sizeof (gaspi_ucx_ctx));
+  if (!ucx_ctx) goto err_alloc_gctx_device_ctx;
+
+  if (ucx_device_comm_ctx_init (ucx_ctx) != UCX_DEVICE_OK)
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to initialize communication context");
+    goto err_comm_ctx_init;
+  }
+
+  gctx->device->ctx = ucx_ctx;
+
+  return 0;
+
+err_comm_ctx_init:
+  free (ucx_ctx);
+err_alloc_gctx_device_ctx:
+  free (gctx->device); gctx->device = NULL;
+err_alloc_gctx_device:
+  return -1;
+}
+
+int
+gaspiu_cleanup_comm_ctx (gaspi_context_t * gctx)
+{
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  ucx_device_comm_ctx_cleanup (ucx_ctx);
+  free (ucx_ctx);
+  free (gctx->device); gctx->device = NULL;
+  return 0;
+}
+
+int
+pgaspi_dev_init_core (gaspi_context_t * const gctx)
+{
+  gaspi_ucx_ctx * ucx_dev_ctx = gctx->device->ctx;
 
   if (!ucx_init_cq (&ucx_dev_ctx->scqGroups, gctx->config->queue_size_max))
   {
@@ -147,6 +180,7 @@ pgaspi_dev_init_core (gaspi_context_t * const gctx)
 
 
   if (ucx_device_init (
+    ucx_dev_ctx->ucp_ctx,
     &ucx_dev_ctx->ucx_device, gctx->rank, gctx->config->dev_config.params.tcp.port + gctx->rank
   ) != UCX_DEVICE_OK)
   {
@@ -169,9 +203,6 @@ err_device_init:
 err_alloc_gctx_qpC:
   /* TODO: should we deallocate the qpCs that were already initialized? */
   free (ucx_dev_ctx);
-err_alloc_gctx_device_ctx:
-  free (gctx->device); gctx->device = NULL;
-err_alloc_gctx_device:
   return -1;
 }
 
@@ -181,7 +212,6 @@ pgaspi_dev_cleanup_core (gaspi_context_t * const gctx)
   gaspi_ucx_ctx * ucx_dev_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   ucx_device_stop (&ucx_dev_ctx->ucx_device);
   ucx_device_cleanup (&ucx_dev_ctx->ucx_device);
-  free (ucx_dev_ctx);
-  free (gctx->device); gctx->device = NULL;
+  ucx_dev_ctx->ucx_device = (struct ucx_device) {0};
   return 0;
 }

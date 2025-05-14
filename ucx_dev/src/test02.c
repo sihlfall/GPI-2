@@ -1,5 +1,6 @@
 #include "ucx_device.h"
 #include "GPI2_UCX.h"
+#include "GPI2_CommCtx.h"
 #include "GASPI.h"
 #include "ucp/api/ucp.h"
 #include "arpa/inet.h"
@@ -18,8 +19,16 @@ run_server (uint16_t host_port, gaspi_rank_t rank)
 {
   int ret = 0;
 
+  gaspi_context_t gctx;
+  if (gaspiu_initialize_comm_ctx (&gctx)) {
+    fprintf (stderr, "Could not initialize comm context\n");
+    ret = 1;
+    goto err_init_comm_ctx;
+  }
+  gaspi_ucx_ctx * ucx_ctx = gctx.device->ctx;
+
   struct ucx_device ucx_device;
-  if (ucx_device_init (&ucx_device, rank, host_port) != UCX_DEVICE_OK) {
+  if (ucx_device_init (ucx_ctx->ucp_ctx, &ucx_device, rank, host_port) != UCX_DEVICE_OK) {
     fprintf (stderr, "Could not create ucx_device\n");
     ret = 1;
     goto err_init_device;
@@ -45,6 +54,8 @@ err_start_device:
   fprintf (stderr, "Server stopped.\n");
 
 err_init_device:
+  gaspiu_cleanup_comm_ctx (&gctx);
+err_init_comm_ctx:
   return ret;
 }
 

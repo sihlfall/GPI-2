@@ -923,7 +923,7 @@ ucx_device_stop (struct ucx_device * ucx_device)
  */
 
 ucx_device_status_t
-ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port)
+ucx_device_comm_ctx_init (gaspi_ucx_ctx * ucx_ctx)
 {
   ucp_config_t * config = NULL;
   {
@@ -955,6 +955,29 @@ ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t hos
 
   ucp_config_release(config);
 
+  *ucx_ctx = (gaspi_ucx_ctx) {
+    .ucp_ctx = ucp_context
+  };
+
+  return UCX_DEVICE_OK;
+
+err_init:
+err_config_read:
+  return UCX_DEVICE_ERR_UNSPECIFIED;  
+}
+
+void
+ucx_device_comm_ctx_cleanup (gaspi_ucx_ctx * ucx_ctx)
+{
+  ucp_cleanup (ucx_ctx->ucp_ctx);
+}
+
+ucx_device_status_t
+ucx_device_init (
+  ucp_context_h ucp_context,
+  struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t host_port
+)
+{
   ucp_worker_h ucp_worker = 0;
   {
     ucs_status_t status = ucp_worker_create (
@@ -1022,7 +1045,6 @@ ucx_device_init (struct ucx_device * ucx_device, gaspi_rank_t rank, uint16_t hos
 
   *ucx_device = (struct ucx_device) {
     .rank = rank,
-    .ucp_ctx = ucp_context,
     .ucp_worker = ucp_worker,
     .host_port = host_port,
     .queue = (struct mpmc_queue) {0},
@@ -1037,9 +1059,6 @@ err_set_am_recv_handler:
 
 err_worker_create:
   ucp_cleanup (ucp_context);
-
-err_init:
-err_config_read:
   return UCX_DEVICE_ERR_UNSPECIFIED;
 }
 
@@ -1048,6 +1067,5 @@ ucx_device_cleanup (struct ucx_device * ucx_device)
 {
   ep_registry_destroy (ucx_device->endpoints);
   ucp_worker_destroy (ucx_device->ucp_worker);
-  ucp_cleanup (ucx_device->ucp_ctx);
 }
 

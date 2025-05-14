@@ -32,9 +32,11 @@ else
 if WITH_UCX
 SRCS += devices/ucx/GPI2_UCX.c devices/ucx/GPI2_UCX_ATOMIC.c devices/ucx/GPI2_UCX_IO.c \
 devices/ucx/GPI2_UCX_PASSIVE.c devices/ucx/GPI2_UCX_SEG.c devices/ucx/GPI2_UCX_GRP.c \
-devices/ucx/ucx_device.c devices/ucx/mpmc_queue.c devices/ucx/ucx_qp.c
+devices/ucx/ucx_device.c devices/ucx/mpmc_queue.c devices/ucx/ucx_qp.c \
+GPI2_SN_ucx.c
 SRCS += devices/ucx/GPI2_UCX.h devices/ucx/ucx_device.h devices/ucx/mpmc_queue.h \
-devices/ucx/mpmc_queue_struct.h devices/ucx/ucx_qp.h
+devices/ucx/mpmc_queue_struct.h devices/ucx/ucx_qp.h \
+GPI2_SN_ucx.h GPI2_CommCtx.h
 default_includes += -DGPI2_DEVICE_UCX
 else
 SRCS += devices/tcp/list.c devices/tcp/rb.c devices/tcp/tcp_device.c \

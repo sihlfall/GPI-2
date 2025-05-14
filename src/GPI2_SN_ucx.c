@@ -79,3 +79,13 @@ err_lock:
   request_cleanup (&request);
   return GASPI_ERROR;
 }
+
+int gaspiu_start_sn (gaspi_context_t * ctx)
+{
+  return 0;
+}
+
+int gaspiu_stop_sn (gaspi_context_t * ctx)
+{
+  return 0;
+}
