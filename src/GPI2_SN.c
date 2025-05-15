@@ -1620,6 +1620,8 @@ gaspi_return_t
 gaspi_sn_command (const enum gaspi_sn_ops op, const gaspi_rank_t rank,
                   const gaspi_timeout_t timeout_ms, const void *const arg)
 {
+  gaspiu_sn_command (op, rank, timeout_ms, arg);
+  
   int ret = -1;
   gaspi_return_t eret = GASPI_ERROR;
 

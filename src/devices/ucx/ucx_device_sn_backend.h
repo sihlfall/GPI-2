@@ -38,5 +38,10 @@ enum ucx_device_sn_status ucx_device_sn_connect_to_rank (
   char const * hostip4, uint64_t port,
   gaspi_rank_t rank, gaspi_timeout_t timeout_ms
 );
+enum ucx_device_sn_status ucx_device_sn_send_recv_cmd (
+  struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
+  unsigned char * header, size_t header_size,
+  unsigned char * recv_buf, size_t recv_size
+);
 
 #endif

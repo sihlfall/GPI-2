@@ -287,3 +287,54 @@ err_ep_create:
 err_inet_pton:
   return UCX_DEVICE_SN_ERR_UNSPECIFIED;
 }
+
+#define AM_CMD (999)
+
+static
+void
+cb_just_free_request (void * request, ucs_status_t status, void * user_data)
+{
+  ucp_request_free (request);
+}
+
+enum ucx_device_sn_status
+ucx_device_sn_send_recv_cmd (
+  struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
+  unsigned char * header, size_t header_size,
+  unsigned char * recv_buf, size_t recv_size
+)
+{
+  struct ucx_device_sn_ep_entry * ep_entry = &udsn->ep_entries [target_rank];
+  if (!ep_entry->is_connected) {
+    fprintf (stderr, "Target rank not connected\n");
+    goto err_not_connected;
+  }
+
+  {
+    ucs_status_ptr_t request = ucp_am_send_nbx (
+      ep_entry->ep, AM_CMD, header, header_size, NULL, 0,
+      & (ucp_request_param_t) {
+        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
+        .cb = { .send = cb_just_free_request }, /* change to check for errors! */
+        .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY
+      }
+    );
+    if (UCS_PTR_IS_ERR (request)) {
+      fprintf (stderr, "AM send failed\n");
+      goto err_am_send;
+    }
+  }
+
+  {
+    unsigned int ret = 0;
+    do {
+      ret = ucp_worker_progress (udsn->sn_passive_worker);
+    } while (ret);
+  }
+
+  return UCX_DEVICE_SN_OK;
+
+err_am_send:
+err_not_connected:
+  return UCX_DEVICE_SN_ERR_UNSPECIFIED;
+}

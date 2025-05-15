@@ -2,6 +2,7 @@
 #include "GASPI.h"
 #include "GPI2_CommCtx.h"
 #include "GPI2_Types.h"
+#include "GPI2_SN.h"
 #include "devices/ucx/GPI2_UCX.h"
 #include "devices/ucx/ucx_device.h"
 #include "devices/ucx/ucx_device_sn_backend.h"
@@ -9,85 +10,31 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
+#include <stdalign.h>
+
 // TODO: Delete when we do not have SN and SN_ucx in parallel anymore
 
 #define TEMP_PORT_OFFSET (30)
-struct request {
-  _Atomic int response_ready;
-  pthread_mutex_t lock;
-  pthread_cond_t cond;
+#define MAX_HEADER_LENGTH (1024)
+
+struct gaspi_cd_header
+{
+  size_t op_len;
+  enum gaspi_sn_ops op;
+
+  int rank, tnc;
+  int ret, seg_id;
+  unsigned long addr, size, notif_addr;
+#ifdef GPI2_DEVICE_UCX
+  uint64_t data_rkey_buffer_size;
+  uint64_t notif_rkey_buffer_size;
+#endif
+#ifdef GPI2_DEVICE_IB
+  int rkey[2];
+#endif
+
+  unsigned char header_data [];
 };
-
-static inline
-void
-request_init (struct request * request)
-{
-  *request = (struct request) {
-    .response_ready = 0,
-    .lock = PTHREAD_MUTEX_INITIALIZER,
-    .cond = PTHREAD_COND_INITIALIZER
-  };
-}
-
-static inline
-void
-request_cleanup (struct request * request)
-{
-  pthread_mutex_destroy (&request->lock);
-  pthread_cond_destroy (&request->cond);
-}
-
-#define EXPECT_ZERO(v,msg,err) \
-  do { \
-    if (!v) \
-    { \
-      fprintf (stderr, msg); \
-      goto err; \
-    } \
-  } while (0)
-
-/* static */
-/*
-gaspi_return_t
-gaspiu_sn_connect_to_rank (
-  gaspi_context_t * gctx,
-  gaspi_rank_t rank,
-  gaspi_timeout_t timeout_ms
-)
-{
-  //struct ucx_device * ucx_device = (struct ucx_device *)gctx->device;
-
-  struct request request;
-  request_init (&request);
-
-  EXPECT_ZERO(pthread_mutex_lock (&request.lock),
-    "Could not lock mutex", err_lock
-  );
-  // enqueue request
-  while (!atomic_load_explicit(&request.response_ready, memory_order_relaxed))
-  {
-    EXPECT_ZERO(pthread_cond_wait (&request.cond, &request.lock),
-      "Cond_wait failed", err_wait
-    );
-  }
-  EXPECT_ZERO(pthread_mutex_unlock (&request.lock),
-    "Could not unlock mutex", err_unlock
-  );
-
-  request_cleanup (&request);
-
-  // check for success
-
-  return GASPI_SUCCESS;
-
-err_unlock:
-err_wait:
-  (void) pthread_mutex_unlock (&request.lock);
-err_lock:
-  request_cleanup (&request);
-  return GASPI_ERROR;
-}
-*/
 
 int gaspiu_init_and_start_sn (gaspi_context_t * gctx)
 {
@@ -97,13 +44,13 @@ int gaspiu_init_and_start_sn (gaspi_context_t * gctx)
   if (
     ucx_device_sn_init (
       &ucx_ctx->sn_device, ucx_ctx->ucp_ctx, gctx->tnc, port
-    ) != UCX_DEVICE_OK
+    ) != UCX_DEVICE_SN_OK
   ) {
     fprintf (stderr, "Error initializing SN device\n");
     goto err_sn_init;
   };
   if (
-    ucx_device_sn_start (&ucx_ctx->sn_device)
+    ucx_device_sn_start (&ucx_ctx->sn_device) != UCX_DEVICE_SN_OK
   ) {
     fprintf (stderr, "Error initializing SN device\n");
     goto err_sn_start;
@@ -125,7 +72,7 @@ gaspiu_stop_and_cleanup_sn (gaspi_context_t * gctx)
   return 0;
 }
 
-int
+gaspi_return_t
 gaspiu_sn_connect_to_rank (gaspi_rank_t rank, gaspi_timeout_t timeout_ms)
 {
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
@@ -139,7 +86,94 @@ gaspiu_sn_connect_to_rank (gaspi_rank_t rank, gaspi_timeout_t timeout_ms)
     ) != UCX_DEVICE_SN_OK
   ) {
     fprintf (stderr, "SN: Could not connect to rank %d\n", (int) rank);
-    return -1;
+    return GASPI_ERROR;
   }
-  return 0;
+  return GASPI_SUCCESS;
+}
+
+static
+gaspi_return_t
+gaspiu_sn_send_recv_cmd (
+  gaspi_rank_t target_rank, enum gaspi_sn_ops op,
+  void * send_buf, size_t send_size,
+  void * recv_buf, size_t recv_size
+)
+{
+  fprintf (stderr, "gaspiu_sn_send_recv_cmd called with op %d\n", op);
+
+  gaspi_context_t * gctx = &glb_gaspi_ctx;
+
+  alignas (struct gaspi_cd_header) unsigned char header_buf [MAX_HEADER_LENGTH];
+  size_t max_header_data_length = MAX_HEADER_LENGTH - sizeof (struct gaspi_cd_header);
+  struct gaspi_cd_header * cdh = &header_buf[0];
+
+  size_t total_header_size;
+  *cdh = (struct gaspi_cd_header) {
+    .op_len = send_size,
+    .op = op,
+    .rank = gctx->rank
+  };
+  if (send_size <= max_header_data_length) {
+    memcpy (cdh->header_data, send_buf, send_size);
+    total_header_size = sizeof (struct gaspi_cd_header) + send_size;
+  } else {
+    fprintf (stderr, "To much data to send\n");
+    goto err_size_too_large;
+  }
+
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  if (ucx_device_sn_send_recv_cmd (
+    &ucx_ctx->sn_device, target_rank, &cdh, total_header_size, recv_buf, recv_size
+  ) != UCX_DEVICE_SN_OK) {
+    fprintf (stderr, "Error send/recv\n");
+    goto err_send_recv;
+  };
+
+  fprintf (stderr, "SN: Successfully sent AM\n");
+
+  return GASPI_SUCCESS;
+
+err_send_recv:
+err_size_too_large:
+  return GASPI_ERROR;
+}
+
+gaspi_return_t
+gaspiu_sn_command (
+  enum gaspi_sn_ops op, gaspi_rank_t rank,
+  gaspi_timeout_t timeout_ms, const void * arg
+)
+{
+  gaspi_return_t eret = GASPI_ERROR;
+
+  eret = gaspiu_sn_connect_to_rank (rank, timeout_ms);
+  if (eret != GASPI_SUCCESS) goto err_connect;
+
+  fprintf (stderr, "SN: Handling command %d\n", op);
+
+  switch (op) {
+  case GASPI_SN_CONNECT:
+    {
+      gaspi_dev_exch_info_t * dev_info = (gaspi_dev_exch_info_t *) arg;
+      size_t rc_size = dev_info->info_size;
+      if (rc_size == 0) { fprintf (stderr, "rc_size == 0\n"); break; }
+      eret = gaspiu_sn_send_recv_cmd (
+        rank, GASPI_SN_CONNECT,
+        dev_info->local_info, rc_size,
+        dev_info->remote_info, rc_size
+      );
+      if (eret != GASPI_SUCCESS) goto err_command;
+    }
+    break;
+  default:
+    break;
+  }
+
+  /* TODO: Close connection if sn_persistent not set. */
+
+  return GASPI_SUCCESS;
+
+err_command:
+err_connect:
+  return eret;
 }
