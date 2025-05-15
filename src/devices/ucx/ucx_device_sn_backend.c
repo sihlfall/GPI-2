@@ -1,11 +1,14 @@
 #include "ucx_device_sn_backend.h"
 
+#include "GASPI_types.h"
+#include "GPI2_Utility.h"
+
 #include "ucp/api/ucp.h"
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <stdatomic.h>
 
-static
+static 
 void
 cb_ep_error (void * args, ucp_ep_h ep, ucs_status_t status)
 {
@@ -109,11 +112,15 @@ do_passive_worker_run (void * args)
 {
   struct ucx_device_sn * myself = (struct ucx_device_sn *) args;
 
+  fprintf(stderr, "Passive worker running\n");
+
   if (do_create_listener (myself)) {
     fprintf (stderr, "SN: Creating listener failed\n");
     goto err;
   }
-  int count = 0;
+
+  fprintf(stderr, "Listener created\n");
+
   while (!atomic_load_explicit(&myself->should_stop, memory_order_acquire)) {
     unsigned int ret = 0;
     do {
@@ -134,6 +141,8 @@ ucx_device_sn_init (
   struct ucx_device_sn * udsn, ucp_context_h ucp_context, uint16_t host_port
 )
 {
+  fprintf (stderr, "*** Initializing sn device with host port %d\n", (int)host_port);
+
   ucp_worker_h active_worker = 0;
   {
     ucs_status_t status = ucp_worker_create (
@@ -203,8 +212,16 @@ ucx_device_sn_stop (struct ucx_device_sn * udsn)
   (void) pthread_join (udsn->passive_server_tid, NULL);
 } 
 
+void
+ucx_device_sn_cleanup (struct ucx_device_sn * udsn)
+{
+  /* TODO: implement */
+}
+
 int
 ucx_device_sn_connect_to_rank (
   void
 )
-{}
+{
+  return 0;
+}

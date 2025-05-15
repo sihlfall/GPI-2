@@ -314,7 +314,7 @@ pgaspi_proc_init (const gaspi_timeout_t timeout_ms)
       GASPI_DEBUG_PRINT_ERROR ("Failed to initialize communication context");
       goto errL;
     }
-    if (gaspiu_start_sn (gctx))
+    if (gaspiu_init_and_start_sn (gctx))
     {
       GASPI_DEBUG_PRINT_ERROR ("Failed to startup SN device context");
       goto errL;
@@ -546,7 +546,7 @@ pgaspi_proc_term (const gaspi_timeout_t timeout)
   }
 
 #ifdef GPI2_DEVICE_UCX
-  (void) gaspiu_stop_sn (gctx);  
+  (void) gaspiu_stop_and_cleanup_sn (gctx);  
 #endif
 
   pthread_kill (gctx->snt, SIGSTKFLT);

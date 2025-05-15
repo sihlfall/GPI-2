@@ -940,7 +940,8 @@ ucx_device_comm_ctx_init (gaspi_ucx_ctx * ucx_ctx)
     ucs_status_t status = ucp_init (
       & (ucp_params_t) {
         .field_mask = UCP_PARAM_FIELD_FEATURES,
-        .features = UCP_FEATURE_AM | UCP_FEATURE_RMA | UCP_FEATURE_AMO64
+        .features = UCP_FEATURE_AM | UCP_FEATURE_RMA | UCP_FEATURE_AMO64 |
+          UCP_FEATURE_WAKEUP
       },
       config,
       &ucp_context

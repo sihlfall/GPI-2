@@ -1,10 +1,17 @@
 
 #include "GASPI.h"
+#include "GPI2_CommCtx.h"
 #include "GPI2_Types.h"
+#include "devices/ucx/GPI2_UCX.h"
 #include "devices/ucx/ucx_device.h"
+#include "devices/ucx/ucx_device_sn_backend.h"
 
+#include <arpa/inet.h>
 #include <pthread.h>
 
+// TODO: Delete when we do not have SN and SN_ucx in parallel anymore
+
+#define TEMP_PORT_OFFSET (30)
 struct request {
   _Atomic int response_ready;
   pthread_mutex_t lock;
@@ -80,12 +87,35 @@ err_lock:
   return GASPI_ERROR;
 }
 
-int gaspiu_start_sn (gaspi_context_t * ctx)
+int gaspiu_init_and_start_sn (gaspi_context_t * gctx)
 {
+  gaspi_ucx_ctx * ucx_ctx = (struct gaspi_utx_ctx *) gctx->device->ctx;
+  
+  uint16_t port = gctx->config->sn_port + gctx->local_rank + TEMP_PORT_OFFSET;  
+  if (
+    ucx_device_sn_init (&ucx_ctx->sn_device, ucx_ctx->ucp_ctx, port) != UCX_DEVICE_OK
+  ) {
+    fprintf (stderr, "Error initializing SN device\n");
+    goto err_sn_init;
+  };
+  if (
+    ucx_device_sn_start (&ucx_ctx->sn_device)
+  ) {
+    fprintf (stderr, "Error initializing SN device\n");
+    goto err_sn_start;
+  }
   return 0;
+
+err_sn_start:
+  ucx_device_sn_cleanup (&ucx_ctx->sn_device);
+err_sn_init:
+  return -1;
 }
 
-int gaspiu_stop_sn (gaspi_context_t * ctx)
+int gaspiu_stop_and_cleanup_sn (gaspi_context_t * gctx)
 {
+  gaspi_ucx_ctx * ucx_ctx = (struct gaspi_utx_ctx *) gctx->device->ctx;
+  ucx_device_sn_stop (&ucx_ctx->sn_device);
+  ucx_device_sn_cleanup (&ucx_ctx->sn_device);
   return 0;
 }

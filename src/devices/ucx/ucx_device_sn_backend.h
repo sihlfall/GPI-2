@@ -18,4 +18,11 @@ struct ucx_device_sn {
   uint16_t host_port;  
 };
 
+enum ucx_device_sn_status
+ucx_device_sn_init (
+  struct ucx_device_sn * udsn, ucp_context_h ucp_context, uint16_t host_port
+);
+void ucx_device_sn_cleanup (struct ucx_device_sn * udsn);
+enum ucx_device_sn_status ucx_device_sn_start (struct ucx_device_sn * udsn);
+void ucx_device_sn_stop (struct ucx_device_sn * udsn);
 #endif
