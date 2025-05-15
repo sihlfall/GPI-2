@@ -138,9 +138,16 @@ err:
 
 enum ucx_device_sn_status
 ucx_device_sn_init (
-  struct ucx_device_sn * udsn, ucp_context_h ucp_context, uint16_t host_port
+  struct ucx_device_sn * udsn, ucp_context_h ucp_context, int tnc, uint16_t host_port
 )
 {
+  struct ucx_device_sn_ep_entry * ep_entries = calloc (tnc, sizeof (*ep_entries));
+  if (!ep_entries)
+  {
+    fprintf (stderr, "Failed to allocate ep entries\n");
+    goto err_alloc_ep_entries;
+  }
+
   fprintf (stderr, "*** Initializing sn device with host port %d\n", (int)host_port);
 
   ucp_worker_h active_worker = 0;
@@ -178,6 +185,7 @@ ucx_device_sn_init (
   *udsn = (struct ucx_device_sn) {
     .sn_active_worker = active_worker,
     .sn_passive_worker = passive_worker,
+    .ep_entries = ep_entries,
     .host_port = host_port
   };
 
@@ -187,6 +195,9 @@ err_passive_worker_create:
   ucp_worker_destroy (active_worker);
 
 err_active_worker_create:
+  free (ep_entries);
+
+err_alloc_ep_entries:
   return UCX_DEVICE_SN_ERR_UNSPECIFIED;
 }
 
@@ -218,10 +229,61 @@ ucx_device_sn_cleanup (struct ucx_device_sn * udsn)
   /* TODO: implement */
 }
 
-int
+enum ucx_device_sn_status
 ucx_device_sn_connect_to_rank (
-  void
+  struct ucx_device_sn * udsn,
+  char const * hostip4, uint64_t port,
+  gaspi_rank_t rank, gaspi_timeout_t timeout_ms
 )
 {
-  return 0;
+  struct sockaddr_in serv_addr = {
+    .sin_family = AF_INET,
+    .sin_port = htons (port)
+  };
+  if (inet_pton (AF_INET, hostip4, &serv_addr.sin_addr) < 0) {
+    fprintf (stderr, "Invalid address/Address not supported");
+    goto err_inet_pton;
+  };
+
+  // TODO: Handle timeout.
+  ucp_ep_h ep;
+  {
+    ucs_status_t status = ucp_ep_create (
+      udsn->sn_active_worker,
+      & (ucp_ep_params_t) {
+        .field_mask = UCP_EP_PARAM_FIELD_FLAGS |
+          UCP_EP_PARAM_FIELD_SOCK_ADDR   |
+          UCP_EP_PARAM_FIELD_ERR_HANDLER |
+          UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE |
+          UCP_EP_PARAM_FIELD_USER_DATA,
+        .err_mode = UCP_ERR_HANDLING_MODE_PEER,
+        .err_handler = { .cb = cb_ep_error },
+        .flags = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER,
+        .sockaddr = {
+          .addr = (struct sockaddr *) &serv_addr,
+          .addrlen = sizeof (struct sockaddr_in)
+        }
+      },
+      &ep
+    ); 
+    if (status != UCS_OK)
+    {
+      fprintf(
+        stderr, "SN active: Failed to create an endpoint: (%s)\n",
+        ucs_status_string(status)
+      );
+      goto err_ep_create;
+    }
+  }
+
+  udsn->ep_entries[rank] = (struct ucx_device_sn_ep_entry) {
+    .is_connected = 1,
+    .ep = ep
+  };
+
+  return UCX_DEVICE_SN_OK;
+
+err_ep_create:
+err_inet_pton:
+  return UCX_DEVICE_SN_ERR_UNSPECIFIED;
 }

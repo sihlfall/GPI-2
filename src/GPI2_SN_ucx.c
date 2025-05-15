@@ -47,6 +47,7 @@ request_cleanup (struct request * request)
   } while (0)
 
 /* static */
+/*
 gaspi_return_t
 gaspiu_sn_connect_to_rank (
   gaspi_context_t * gctx,
@@ -86,6 +87,7 @@ err_lock:
   request_cleanup (&request);
   return GASPI_ERROR;
 }
+*/
 
 int gaspiu_init_and_start_sn (gaspi_context_t * gctx)
 {
@@ -93,7 +95,9 @@ int gaspiu_init_and_start_sn (gaspi_context_t * gctx)
   
   uint16_t port = gctx->config->sn_port + gctx->local_rank + TEMP_PORT_OFFSET;  
   if (
-    ucx_device_sn_init (&ucx_ctx->sn_device, ucx_ctx->ucp_ctx, port) != UCX_DEVICE_OK
+    ucx_device_sn_init (
+      &ucx_ctx->sn_device, ucx_ctx->ucp_ctx, gctx->tnc, port
+    ) != UCX_DEVICE_OK
   ) {
     fprintf (stderr, "Error initializing SN device\n");
     goto err_sn_init;
@@ -112,10 +116,30 @@ err_sn_init:
   return -1;
 }
 
-int gaspiu_stop_and_cleanup_sn (gaspi_context_t * gctx)
+int
+gaspiu_stop_and_cleanup_sn (gaspi_context_t * gctx)
 {
-  gaspi_ucx_ctx * ucx_ctx = (struct gaspi_utx_ctx *) gctx->device->ctx;
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   ucx_device_sn_stop (&ucx_ctx->sn_device);
   ucx_device_sn_cleanup (&ucx_ctx->sn_device);
+  return 0;
+}
+
+int
+gaspiu_sn_connect_to_rank (gaspi_rank_t rank, gaspi_timeout_t timeout_ms)
+{
+  gaspi_context_t const *const gctx = &glb_gaspi_ctx;
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+
+  if (
+    ucx_device_sn_connect_to_rank (
+      &ucx_ctx->sn_device, pgaspi_gethostname (rank),
+      gctx->config->sn_port + TEMP_PORT_OFFSET + gctx->poff[rank],
+      rank, timeout_ms
+    ) != UCX_DEVICE_SN_OK
+  ) {
+    fprintf (stderr, "SN: Could not connect to rank %d\n", (int) rank);
+    return -1;
+  }
   return 0;
 }

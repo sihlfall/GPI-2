@@ -38,6 +38,9 @@ along with GPI-2. If not, see <http://www.gnu.org/licenses/>.
 #include "GPI2_Utility.h"
 #include "GPI2_SEG.h"
 
+// TODO: Remove when we do not need both anymore
+#include "GPI2_SN_ucx.h"
+
 #define GASPI_EPOLL_CREATE  (256)
 #define GASPI_EPOLL_MAX_EVENTS  (2048)
 
@@ -714,6 +717,9 @@ gaspi_sn_connect_to_rank (const gaspi_rank_t rank,
   gaspi_context_t const *const gctx = &glb_gaspi_ctx;
   struct timeb t0, t1;
 
+#ifdef GPI2_DEVICE_UCX
+  (void) gaspiu_sn_connect_to_rank (rank, timeout_ms);
+#endif
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"    
   ftime (&t0);
