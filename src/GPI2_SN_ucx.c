@@ -165,6 +165,9 @@ gaspiu_sn_command (
       if (eret != GASPI_SUCCESS) goto err_command;
     }
     break;
+  case GASPI_SN_GRP_CONNECT:
+
+    break;
   default:
     break;
   }
