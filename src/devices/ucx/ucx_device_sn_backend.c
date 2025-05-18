@@ -8,6 +8,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+#define AM_CMD (999)
+
 static 
 void
 cb_ep_error (void * args, ucp_ep_h ep, ucs_status_t status)
@@ -100,6 +102,32 @@ do_cleanup_listener (struct ucx_device_sn * udsn)
   }
 }
 
+/* ************************************************************************************
+ * AM handler
+ * ************************************************************************************
+ */
+
+struct gaspi_cd_header_base {
+  size_t op_len;
+  int op;
+  int rank;
+};
+
+static
+ucs_status_t
+on_am_cmd (
+  void * arg, const void * header, size_t header_length, void * data, size_t length,
+  const ucp_am_recv_param_t * param
+)
+{
+  struct ucx_sn_device * usnd = (struct ucx_sn_device *) arg;
+
+  fprintf (stderr, "SN: AM recv handler called with op %d\n", ((struct gaspi_cd_header_base *)header)->op);
+
+err:
+  return UCS_OK;
+}
+
 /* 
  * ************************************************************************************
  * Run (passive worker thread main function)
@@ -182,6 +210,25 @@ ucx_device_sn_init (
     }
   }
 
+  {
+    ucs_status_t status = ucp_worker_set_am_recv_handler (passive_worker,
+      & (ucp_am_handler_param_t) {
+        .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+          UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
+          UCP_AM_HANDLER_PARAM_FIELD_CB | UCP_AM_HANDLER_PARAM_FIELD_ARG,
+        .id = AM_CMD,
+        .flags = UCP_AM_FLAG_WHOLE_MSG,
+        .cb = on_am_cmd,
+        .arg = (void *) udsn
+      }
+    );
+    if (status != UCS_OK)
+    {
+      GASPI_DEBUG_PRINT_ERROR("SN: setting AM recv handler failed: %d", status);
+      goto err_set_am_recv_handler;
+    }
+  }
+
   *udsn = (struct ucx_device_sn) {
     .sn_active_worker = active_worker,
     .sn_passive_worker = passive_worker,
@@ -190,6 +237,9 @@ ucx_device_sn_init (
   };
 
   return UCX_DEVICE_SN_OK;
+
+err_set_am_recv_handler:
+  ucp_worker_destroy (passive_worker);
 
 err_passive_worker_create:
   ucp_worker_destroy (active_worker);
@@ -288,13 +338,54 @@ err_inet_pton:
   return UCX_DEVICE_SN_ERR_UNSPECIFIED;
 }
 
-#define AM_CMD (999)
-
 static
 void
 cb_just_free_request (void * request, ucs_status_t status, void * user_data)
 {
+  fprintf (stderr, "Freeing request, status: %d\n", status);
   ucp_request_free (request);
+}
+
+static
+void
+cb_set_bool_true (void * request, ucs_status_t status, void * user_data)
+{
+  _Bool * complete = (_Bool *) user_data;
+  *complete = 1;
+}
+
+/* From ucp_client_server.c, adjusted */
+static
+int
+request_wait_and_finalize (
+  ucp_worker_h ucp_worker, ucs_status_ptr_t request, _Bool * complete
+)
+{
+  if (!request) {
+    /* operation was completed immediately */
+    return UCS_OK;
+  } else if (UCS_PTR_IS_ERR(request)) {
+    return UCS_PTR_STATUS(request);
+  }
+
+  ucs_status_t status = UCS_OK;
+  while (!*complete) {
+    unsigned int ret = 0;
+    do { ret = ucp_worker_progress (ucp_worker); } while (ret);
+    if (*complete) break;
+    status = ucp_worker_wait (ucp_worker);
+    if (status != UCS_OK) goto err;
+  }
+  status = ucp_request_check_status (request);
+  if (status != UCS_OK) goto err;
+
+  ucp_request_free(request);
+  return UCS_OK;
+
+err:
+  ucp_request_free(request);
+  fprintf (stderr, "unable to send UCX message (%s)\n", ucs_status_string (status));
+  return status;
 }
 
 enum ucx_device_sn_status
@@ -310,26 +401,23 @@ ucx_device_sn_send_recv_cmd (
     goto err_not_connected;
   }
 
-  {
-    ucs_status_ptr_t request = ucp_am_send_nbx (
-      ep_entry->ep, AM_CMD, header, header_size, NULL, 0,
-      & (ucp_request_param_t) {
-        .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS,
-        .cb = { .send = cb_just_free_request }, /* change to check for errors! */
-        .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY
-      }
-    );
-    if (UCS_PTR_IS_ERR (request)) {
-      fprintf (stderr, "AM send failed\n");
-      goto err_am_send;
-    }
-  }
+  fprintf (stderr, "Sending ...\n");
 
-  {
-    unsigned int ret = 0;
-    do {
-      ret = ucp_worker_progress (udsn->sn_passive_worker);
-    } while (ret);
+  _Bool complete = 0;
+  ucs_status_ptr_t request = ucp_am_send_nbx (
+    ep_entry->ep, AM_CMD, header, header_size, NULL, 0,
+    & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS |
+        UCP_OP_ATTR_FIELD_USER_DATA,
+      .cb = { .send = cb_set_bool_true },
+      .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+      .user_data = &complete
+    }
+  );
+  if (
+    request_wait_and_finalize (udsn->sn_active_worker, request, &complete) != UCS_OK
+  ) {
+    goto err_am_send;
   }
 
   return UCX_DEVICE_SN_OK;
