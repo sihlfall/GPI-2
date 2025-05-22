@@ -17,8 +17,10 @@ struct ucx_device_sn_ep_entry {
 };
 
 struct ucx_device_sn {
+  void * gctx;
   _Atomic _Bool should_stop;
   ucp_worker_h sn_active_worker;
+  _Bool response_available;
   ucp_worker_h sn_passive_worker;
   pthread_t passive_server_tid;
   ucp_listener_h sn_listener;
@@ -28,7 +30,8 @@ struct ucx_device_sn {
 
 enum ucx_device_sn_status
 ucx_device_sn_init (
-  struct ucx_device_sn * udsn, ucp_context_h ucp_context, int tnc, uint16_t host_port
+  void * gctx, struct ucx_device_sn * udsn, ucp_context_h ucp_context, int tnc, 
+  uint16_t host_port
 );
 void ucx_device_sn_cleanup (struct ucx_device_sn * udsn);
 enum ucx_device_sn_status ucx_device_sn_start (struct ucx_device_sn * udsn);
@@ -42,6 +45,17 @@ enum ucx_device_sn_status ucx_device_sn_send_recv_cmd (
   struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
   unsigned char * header, size_t header_size,
   unsigned char * recv_buf, size_t recv_size
+);
+void ucx_device_sn_send_cmd_response (
+  struct ucx_device_sn * udsn, void * recv_param,
+  void * header, size_t header_size
+);
+
+
+
+/* "Static" callback, to be implemented in GPI2_SN_ucx.c */
+void gaspiu_sn_handle_cmd (
+  void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header
 );
 
 #endif

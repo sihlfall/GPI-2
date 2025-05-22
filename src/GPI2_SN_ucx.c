@@ -48,7 +48,7 @@ int gaspiu_init_and_start_sn (gaspi_context_t * gctx)
   uint16_t port = gctx->config->sn_port + gctx->local_rank + TEMP_PORT_OFFSET;  
   if (
     ucx_device_sn_init (
-      &ucx_ctx->sn_device, ucx_ctx->ucp_ctx, gctx->tnc, port
+      gctx, &ucx_ctx->sn_device, ucx_ctx->ucp_ctx, gctx->tnc, port
     ) != UCX_DEVICE_SN_OK
   ) {
     fprintf (stderr, "Error initializing SN device\n");
@@ -170,6 +170,11 @@ struct gaspiu_mseg_exch_info {
   unsigned char rkeys_buffer[];
 };
 
+struct mseg_exch_info_size_pair {
+  struct gaspiu_mseg_exch_info * info;
+  size_t size;
+};
+
 static
 gaspi_return_t
 gaspiu_sn_send_recv_group_connect (
@@ -208,6 +213,80 @@ gaspiu_sn_send_recv_group_connect (
 
 err_send_recv:
   return GASPI_ERROR;
+}
+
+static
+struct mseg_exch_info_size_pair
+_gaspi_create_mseg_exch_info (gaspi_rc_mseg_t * mseg)
+{
+  size_t data_rkey_buffer_size = mseg->mr[0].rkey_buffer_size;
+  size_t notif_spc_rkey_buffer_size = mseg->mr[1].rkey_buffer_size;
+
+  size_t sz = sizeof (struct gaspiu_mseg_exch_info)
+    + data_rkey_buffer_size + notif_spc_rkey_buffer_size;
+
+  struct gaspiu_mseg_exch_info * info = malloc (sz);
+  /* TO DO: Check for NULL? */
+  *info = (struct gaspiu_mseg_exch_info) {
+    .data_ptr = mseg->data.ptr,
+    .notif_spc_ptr = mseg->notif_spc.ptr,
+    .size = mseg->size,
+    .notif_spc_size = mseg->notif_spc_size,
+    .trans = mseg->trans,
+    .user_provided = mseg->user_provided,
+    .desc = mseg->desc,
+    .data_rkey_buffer_size = data_rkey_buffer_size,
+    .notif_spc_rkey_buffer_size = notif_spc_rkey_buffer_size
+  };
+  memcpy (&info->rkeys_buffer[0], mseg->mr[0].rkey_buffer, data_rkey_buffer_size);
+  memcpy (&info->rkeys_buffer[data_rkey_buffer_size], mseg->mr[1].rkey_buffer,
+    notif_spc_rkey_buffer_size);
+
+  return (struct mseg_exch_info_size_pair) { .info = info, .size = sz };
+}
+
+static
+void
+gaspiu_sn_handle_group_connect (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspiu_cd_header_group_connect * header
+)
+{
+
+  const gaspi_group_ctx_t *grp_to_connect = &(gctx->groups[header->group]);
+
+  //TODO: to remove?
+  while ((grp_to_connect->id == -1))
+  {
+    GASPI_DELAY();
+  }
+
+  struct mseg_exch_info_size_pair p = _gaspi_create_mseg_exch_info (
+    &grp_to_connect->rrcd[gctx->rank]
+  );
+
+  ucx_device_sn_send_cmd_response (udsn, recv_param, p.info, p.size);
+
+  free (p.info);
+}
+
+void
+gaspiu_sn_handle_cmd (
+  void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header
+)
+{
+  struct gaspi_cd_header_base * general = (struct gaspi_cd_header_base *) header;
+  fprintf (stderr, "Handle called with op %d\n", general->op);
+  switch (general->op) {
+  case GASPI_SN_GRP_CONNECT:
+    gaspiu_sn_handle_group_connect (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspiu_cd_header_group_connect *) header
+    );
+    break;
+  default:
+    break;
+  }
 }
 
 gaspi_return_t

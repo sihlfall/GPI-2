@@ -9,6 +9,7 @@
 #include <stdatomic.h>
 
 #define AM_CMD (999)
+#define AM_CMD_RESPONSE (1000)
 
 static 
 void
@@ -120,12 +121,46 @@ on_am_cmd (
   const ucp_am_recv_param_t * param
 )
 {
-  struct ucx_sn_device * usnd = (struct ucx_sn_device *) arg;
+  struct ucx_device_sn * udsn = (struct ucx_device_sn *) arg;
 
   fprintf (stderr, "SN: AM recv handler called with op %d\n", ((struct gaspi_cd_header_base *)header)->op);
 
+  gaspiu_sn_handle_cmd (udsn->gctx, udsn, param, header);
+
 err:
   return UCS_OK;
+}
+
+static
+ucs_status_t
+on_am_cmd_response (
+  void * arg, const void * header, size_t header_length, void * data, size_t length,
+  const ucp_am_recv_param_t * param
+)
+{
+  struct ucx_device_sn * udsn = (struct ucx_device_sn *) arg;
+
+  fprintf (stderr, "SN: AM recv response handler called\n");
+  udsn->response_available = 1;
+
+err:
+  return UCS_OK;
+}
+
+void
+ucx_device_sn_send_cmd_response (
+  struct ucx_device_sn * udsn, void * recv_param, void * header, size_t header_size
+)
+{
+  ucp_am_recv_param_t * rp = (ucp_am_recv_param_t *) recv_param;
+  ucs_status_ptr_t request = ucp_am_send_nbx (
+    rp->reply_ep, AM_CMD_RESPONSE, header, header_size, NULL, 0,
+    & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
+      .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY | UCP_AM_SEND_FLAG_COPY_HEADER
+    }
+  );
+  if (UCS_PTR_IS_PTR(request)) ucp_request_free (request);
 }
 
 /* 
@@ -166,7 +201,8 @@ err:
 
 enum ucx_device_sn_status
 ucx_device_sn_init (
-  struct ucx_device_sn * udsn, ucp_context_h ucp_context, int tnc, uint16_t host_port
+  void * gctx, struct ucx_device_sn * udsn, ucp_context_h ucp_context, int tnc,
+  uint16_t host_port
 )
 {
   struct ucx_device_sn_ep_entry * ep_entries = calloc (tnc, sizeof (*ep_entries));
@@ -191,6 +227,27 @@ ucx_device_sn_init (
     if (status != UCS_OK) {
       GASPI_DEBUG_PRINT_ERROR("SN: ucp_worker_create (active) failed: %d", status);
       goto err_active_worker_create;
+    }
+  }
+
+  {
+    ucs_status_t status = ucp_worker_set_am_recv_handler (active_worker,
+      & (ucp_am_handler_param_t) {
+        .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+          UCP_AM_HANDLER_PARAM_FIELD_FLAGS |
+          UCP_AM_HANDLER_PARAM_FIELD_CB | UCP_AM_HANDLER_PARAM_FIELD_ARG,
+        .id = AM_CMD_RESPONSE,
+        .flags = UCP_AM_FLAG_WHOLE_MSG,
+        .cb = on_am_cmd_response,
+        .arg = (void *) udsn
+      }
+    );
+    if (status != UCS_OK)
+    {
+      GASPI_DEBUG_PRINT_ERROR(
+        "SN: setting AM recv handler (response) failed: %d", status
+      );
+      goto err_set_am_recv_response_handler;
     }
   }
 
@@ -230,6 +287,7 @@ ucx_device_sn_init (
   }
 
   *udsn = (struct ucx_device_sn) {
+    .gctx = gctx,
     .sn_active_worker = active_worker,
     .sn_passive_worker = passive_worker,
     .ep_entries = ep_entries,
@@ -242,8 +300,9 @@ err_set_am_recv_handler:
   ucp_worker_destroy (passive_worker);
 
 err_passive_worker_create:
+err_set_am_recv_response_handler:
   ucp_worker_destroy (active_worker);
-
+  
 err_active_worker_create:
   free (ep_entries);
 
@@ -404,6 +463,7 @@ ucx_device_sn_send_recv_cmd (
   fprintf (stderr, "Sending ...\n");
 
   _Bool complete = 0;
+  udsn->response_available = 0;
   ucs_status_ptr_t request = ucp_am_send_nbx (
     ep_entry->ep, AM_CMD, header, header_size, NULL, 0,
     & (ucp_request_param_t) {
@@ -420,8 +480,18 @@ ucx_device_sn_send_recv_cmd (
     goto err_am_send;
   }
 
+  {
+    while (!udsn->response_available) {
+      unsigned int ret = 0;
+      do { ret = ucp_worker_progress (udsn->sn_active_worker); } while (ret);
+      if (udsn->response_available) break;
+      ucs_status_t status = ucp_worker_wait (udsn->sn_active_worker);
+      if (status != UCS_OK) goto err_waiting_for_response;
+    }  
+  }
   return UCX_DEVICE_SN_OK;
 
+err_waiting_for_response:
 err_am_send:
 err_not_connected:
   return UCX_DEVICE_SN_ERR_UNSPECIFIED;
