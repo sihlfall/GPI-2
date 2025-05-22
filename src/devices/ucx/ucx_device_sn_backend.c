@@ -503,3 +503,42 @@ err_am_send:
 err_not_connected:
   return UCX_DEVICE_SN_ERR_UNSPECIFIED;
 }
+
+enum ucx_device_sn_status
+ucx_device_sn_send_cmd (
+  struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
+  void * header, size_t header_size
+)
+{
+  struct ucx_device_sn_ep_entry * ep_entry = &udsn->ep_entries [target_rank];
+  if (!ep_entry->is_connected) {
+    fprintf (stderr, "Target rank not connected\n");
+    goto err_not_connected;
+  }
+
+  fprintf (stderr, "Sending ...\n");
+
+  _Bool complete = 0;
+
+  ucs_status_ptr_t request = ucp_am_send_nbx (
+    ep_entry->ep, AM_CMD, header, header_size, NULL, 0,
+    & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS |
+        UCP_OP_ATTR_FIELD_USER_DATA,
+      .cb = { .send = cb_set_bool_true },
+      .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+      .user_data = &complete
+    }
+  );
+  if (
+    request_wait_and_finalize (udsn->sn_active_worker, request, &complete) != UCS_OK
+  ) {
+    goto err_am_send;
+  }
+
+  return UCX_DEVICE_SN_OK;
+
+err_am_send:
+err_not_connected:
+  return UCX_DEVICE_SN_ERR_UNSPECIFIED;
+}

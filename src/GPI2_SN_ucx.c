@@ -116,7 +116,7 @@ gaspiu_sn_send_recv_cmd (
     unsigned char header_buf [UCX_DEVICE_SN_MAX_HEADER_LENGTH];
   size_t max_header_data_length =
     UCX_DEVICE_SN_MAX_HEADER_LENGTH - sizeof (struct gaspi_cd_header_connect);
-  struct gaspi_cd_header_connect * cdh = &header_buf[0];
+  struct gaspi_cd_header_connect * cdh = (struct gaspi_cd_header_connect *) &header_buf[0];
 
   size_t total_header_size;
   *cdh = (struct gaspi_cd_header_connect) {
@@ -221,6 +221,104 @@ err:
   ;
 }
 
+/* ************************************************************************************
+ * PROC_KILL
+ * ************************************************************************************
+ */
+
+static
+gaspi_return_t
+gaspiu_sn_send_proc_kill (gaspi_rank_t target_rank)
+{
+  fprintf (stderr, "gaspiu_sn_send_proc_kill called\n");
+
+  gaspi_context_t * gctx = &glb_gaspi_ctx;
+
+  struct gaspi_cd_header_connect cdh = {
+    .general = {
+      .op_len = 0,
+      .op = GASPI_SN_PROC_KILL,
+      .rank = gctx->rank
+    }
+  };
+
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  if (ucx_device_sn_send_cmd (
+    &ucx_ctx->sn_device, target_rank, &cdh, sizeof (struct gaspi_cd_header_connect)
+  ) != UCX_DEVICE_SN_OK) {
+    fprintf (stderr, "Error send\n");
+    goto err_send;
+  };
+
+  fprintf (stderr, "SN: Successfully sent AM\n");
+
+  return GASPI_SUCCESS;
+
+err_send:
+  return GASPI_ERROR;
+}
+
+static
+void
+gaspiu_sn_handle_proc_kill (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspi_cd_header_connect * header
+)
+{
+  _exit (-1);
+}
+
+/* ************************************************************************************
+ * DISCONNECT
+ * ************************************************************************************
+ */
+
+static
+gaspi_return_t
+gaspiu_sn_send_disconnect (gaspi_rank_t target_rank)
+{
+  fprintf (stderr, "gaspiu_sn_send_proc_kill called\n");
+
+  gaspi_context_t * gctx = &glb_gaspi_ctx;
+
+  struct gaspi_cd_header_connect cdh = {
+    .general = {
+      .op_len = 0,
+      .op = GASPI_SN_DISCONNECT,
+      .rank = gctx->rank
+    }
+  };
+
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  if (ucx_device_sn_send_cmd (
+    &ucx_ctx->sn_device, target_rank, &cdh, sizeof (struct gaspi_cd_header_connect)
+  ) != UCX_DEVICE_SN_OK) {
+    fprintf (stderr, "Error send\n");
+    goto err_send;
+  };
+
+  fprintf (stderr, "SN: Successfully sent AM\n");
+
+  return GASPI_SUCCESS;
+
+err_send:
+  return GASPI_ERROR;
+}
+
+static
+void
+gaspiu_sn_handle_disconnect (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspi_cd_header_connect * header
+)
+{
+  int peer_rank = header->general.rank;
+  if (gctx->ep_conn[peer_rank].cstat != GASPI_ENDPOINT_CONNECTED) return;
+  gaspi_timeout_t sn_config_timeout = gctx->config->sn_timeout;
+  if (pgaspi_local_disconnect (peer_rank, sn_config_timeout) != GASPI_SUCCESS) {
+    GASPI_DEBUG_PRINT_ERROR("Failed to disconnect with %u.", peer_rank);
+  }
+}
 
 /* ************************************************************************************
  * GRP_CONNECT
@@ -448,6 +546,18 @@ gaspiu_sn_handle_cmd (
       (struct gaspi_cd_header_connect *) header
     );
     break;
+  case GASPI_SN_PROC_KILL:
+    gaspiu_sn_handle_proc_kill (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspi_cd_header_connect *) header
+    );
+    break;
+  case GASPI_SN_DISCONNECT:
+    gaspiu_sn_handle_disconnect (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspi_cd_header_connect *) header
+    );
+    break;
   case GASPI_SN_GRP_CONNECT:
     gaspiu_sn_handle_group_connect (
       (gaspi_context_t *) gctx, udsn, recv_param,
@@ -483,12 +593,19 @@ gaspiu_sn_command (
     eret = gaspiu_sn_send_recv_connect (rank, (gaspi_dev_exch_info_t *) arg);
     if (eret != GASPI_SUCCESS) goto err_command;
     break;
+  case GASPI_SN_PROC_KILL:
+    eret = gaspiu_sn_send_proc_kill (rank);
+    if (eret != GASPI_SUCCESS) goto err_command;
+    break;
+  case GASPI_SN_DISCONNECT:
+    eret = gaspiu_sn_send_disconnect (rank);
+    if (eret != GASPI_SUCCESS) goto err_command;
+    break;
   case GASPI_SN_GRP_CONNECT:
     {
       gaspi_group_t group = *(gaspi_group_t *) arg;
       eret = gaspiu_sn_send_recv_group_connect (rank, group);
       if (eret != GASPI_SUCCESS) goto err_command;
-    
     }
     break;
   case GASPI_SN_QUEUE_CREATE:

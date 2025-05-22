@@ -13,6 +13,11 @@ enum ucx_device_sn_status {
   UCX_DEVICE_SN_ERR_UNSPECIFIED = -1
 };
 
+enum ucx_device_sn_terminate {
+  UCX_DEVICE_SN_DO_NOT_TERMINATE = 0,
+  UCX_DEVICE_SN_KILL = 1
+};
+
 struct ucx_device_sn_ep_entry {
   ucp_ep_h ep;
   _Bool is_connected;
@@ -50,6 +55,10 @@ enum ucx_device_sn_status ucx_device_sn_send_recv_cmd (
   struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
   void * header, size_t header_size,
   void * recv_buf, size_t recv_size
+);
+enum ucx_device_sn_status ucx_device_sn_send_cmd (
+  struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
+  void * header, size_t header_size
 );
 void ucx_device_sn_send_cmd_response (
   struct ucx_device_sn * udsn, void * recv_param,
