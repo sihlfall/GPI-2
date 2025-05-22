@@ -6,6 +6,8 @@
 #include "ucp/api/ucp.h"
 #include <pthread.h>
 
+#define UCX_DEVICE_SN_MAX_HEADER_LENGTH (1024)
+
 enum ucx_device_sn_status {
   UCX_DEVICE_SN_OK = 0,
   UCX_DEVICE_SN_ERR_UNSPECIFIED = -1
@@ -20,12 +22,15 @@ struct ucx_device_sn {
   void * gctx;
   _Atomic _Bool should_stop;
   ucp_worker_h sn_active_worker;
-  _Bool response_available;
+  _Bool response_available; /* better: running id */
+  void * recv_buf;
+  size_t max_recv_size;
   ucp_worker_h sn_passive_worker;
   pthread_t passive_server_tid;
   ucp_listener_h sn_listener;
   uint16_t host_port;
   struct ucx_device_sn_ep_entry * ep_entries;
+  /* _Alignas(max_align_t) unsigned char response_header [UCX_DEVICE_SN_MAX_HEADER_LENGTH]; */
 };
 
 enum ucx_device_sn_status

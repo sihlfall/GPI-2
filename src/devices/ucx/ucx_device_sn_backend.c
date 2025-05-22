@@ -141,9 +141,9 @@ on_am_cmd_response (
   struct ucx_device_sn * udsn = (struct ucx_device_sn *) arg;
 
   fprintf (stderr, "SN: AM recv response handler called\n");
+  if (udsn->max_recv_size < header_length) header_length = udsn->max_recv_size;
+  memcpy (udsn->recv_buf, header, header_length);
   udsn->response_available = 1;
-
-err:
   return UCS_OK;
 }
 
@@ -463,7 +463,14 @@ ucx_device_sn_send_recv_cmd (
   fprintf (stderr, "Sending ...\n");
 
   _Bool complete = 0;
+  /* This is a bit brittle and works only if we have single-threaded,
+   * blocking communication. Probably unique message ids and a hash table
+   * would be better
+   */
   udsn->response_available = 0;
+  udsn->recv_buf = recv_buf;
+  udsn->max_recv_size = recv_size;
+  
   ucs_status_ptr_t request = ucp_am_send_nbx (
     ep_entry->ep, AM_CMD, header, header_size, NULL, 0,
     & (ucp_request_param_t) {

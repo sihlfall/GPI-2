@@ -15,7 +15,6 @@
 // TODO: Delete when we do not have SN and SN_ucx in parallel anymore
 
 #define TEMP_PORT_OFFSET (30)
-#define MAX_HEADER_LENGTH (1024)
 
 struct gaspi_cd_header_base {
   size_t op_len;
@@ -114,9 +113,9 @@ gaspiu_sn_send_recv_cmd (
   gaspi_context_t * gctx = &glb_gaspi_ctx;
 
   alignas (struct gaspi_cd_header_connect)
-    unsigned char header_buf [MAX_HEADER_LENGTH];
+    unsigned char header_buf [UCX_DEVICE_SN_MAX_HEADER_LENGTH];
   size_t max_header_data_length =
-    MAX_HEADER_LENGTH - sizeof (struct gaspi_cd_header_connect);
+    UCX_DEVICE_SN_MAX_HEADER_LENGTH - sizeof (struct gaspi_cd_header_connect);
   struct gaspi_cd_header_connect * cdh = &header_buf[0];
 
   size_t total_header_size;
@@ -197,6 +196,7 @@ gaspiu_sn_send_recv_group_connect (
   
   enum { max_recv_size = 1024 };
   alignas (struct gaspiu_mseg_exch_info) unsigned char recv_buf [max_recv_size];
+  struct gaspiu_mseg_exch_info * info = (struct gaspiu_mseg_exch_info *) &recv_buf[0];
 
   gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   if (ucx_device_sn_send_recv_cmd (
@@ -207,8 +207,45 @@ gaspiu_sn_send_recv_group_connect (
   };
 
   /* Now: handle received data */
+  unsigned char * data_rkey_buffer = NULL;
+  if (info->data_rkey_buffer_size) {
+    fprintf(stderr, "Size: %lu\n", info->data_rkey_buffer_size);
+    data_rkey_buffer = malloc (info->data_rkey_buffer_size);
+    memcpy(
+      data_rkey_buffer,
+      &recv_buf[sizeof(struct gaspiu_mseg_exch_info)],
+      info->data_rkey_buffer_size
+    );
+  }
+  unsigned char * notif_spc_rkey_buffer = NULL;
+  if (info->notif_spc_rkey_buffer_size) {
+    notif_spc_rkey_buffer = malloc (info->notif_spc_rkey_buffer_size);
+    memcpy(
+      notif_spc_rkey_buffer,
+      &recv_buf[sizeof(struct gaspiu_mseg_exch_info) + info->data_rkey_buffer_size],
+      info->data_rkey_buffer_size
+    );
+  }
+  gctx->groups[group].rrcd[target_rank] = (gaspi_rc_mseg_t) {
+    .data.ptr = info->data_ptr,
+    .notif_spc.ptr = info->notif_spc_ptr,
+    .size = info->size,
+    .notif_spc_size = info->notif_spc_size,
+    .trans = info->trans,
+    .user_provided = info->user_provided,
+    .desc = info->desc,
+    .mr = {
+      {
+        .rkey_buffer = data_rkey_buffer,
+        .rkey_buffer_size = info->data_rkey_buffer_size
+      },
+      {
+        .rkey_buffer = notif_spc_rkey_buffer,
+        .rkey_buffer_size = info->notif_spc_rkey_buffer_size
+      }
+    }
+  };
 
-  
   return GASPI_SUCCESS;
 
 err_send_recv:
@@ -315,6 +352,8 @@ gaspiu_sn_command (
       );
       if (eret != GASPI_SUCCESS) goto err_command;
     }
+    eret = GASPI_ERROR; /* unhandled */
+    goto err_command;
     break;
   case GASPI_SN_GRP_CONNECT:
     {
@@ -325,6 +364,8 @@ gaspiu_sn_command (
     }
     break;
   default:
+    eret = GASPI_ERROR; /* unhandled */
+    goto err_command;
     break;
   }
 
