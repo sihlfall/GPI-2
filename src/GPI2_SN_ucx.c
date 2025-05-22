@@ -42,7 +42,7 @@ struct gaspi_cd_header
 
 int gaspiu_init_and_start_sn (gaspi_context_t * gctx)
 {
-  gaspi_ucx_ctx * ucx_ctx = (struct gaspi_utx_ctx *) gctx->device->ctx;
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   
   uint16_t port = gctx->config->sn_port + gctx->local_rank + TEMP_PORT_OFFSET;  
   if (
@@ -136,7 +136,8 @@ gaspiu_sn_send_recv_cmd (
 
   gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   if (ucx_device_sn_send_recv_cmd (
-    &ucx_ctx->sn_device, target_rank, &cdh, total_header_size, recv_buf, recv_size
+    &ucx_ctx->sn_device, target_rank, &cdh, total_header_size,
+    recv_buf, recv_size
   ) != UCX_DEVICE_SN_OK) {
     fprintf (stderr, "Error send/recv\n");
     goto err_send_recv;
@@ -150,6 +151,81 @@ err_send_recv:
 err_size_too_large:
   return GASPI_ERROR;
 }
+
+/* ************************************************************************************
+ * CONNECT
+ * ************************************************************************************
+ */
+
+static
+gaspi_return_t
+gaspiu_sn_send_recv_connect (
+  gaspi_rank_t target_rank, gaspi_dev_exch_info_t * dev_info
+)
+{
+  size_t rc_size = dev_info->info_size;
+  if (rc_size == 0) { fprintf (stderr, "rc_size == 0\n"); return GASPI_SUCCESS; }
+  return gaspiu_sn_send_recv_cmd (
+    target_rank, GASPI_SN_CONNECT,
+    dev_info->local_info, rc_size,
+    dev_info->remote_info, rc_size
+  );
+}
+
+static
+void
+gaspiu_sn_handle_connect (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspi_cd_header_connect * header
+)
+{
+  int peer_rank = header->general.rank;
+  gaspi_dev_exch_info_t * exch_info = &(gctx->ep_conn[peer_rank].exch_info);
+  gaspi_timeout_t sn_config_timeout = gctx->config->sn_timeout;
+
+  gaspi_return_t eret = pgaspi_create_endpoint_to (
+    peer_rank, exch_info, sn_config_timeout
+  );
+  if (eret != GASPI_SUCCESS) {
+    GASPI_DEBUG_PRINT_ERROR("Failed to create endpoint with %u\n", peer_rank);
+    goto err;
+  }
+
+  size_t info_size = exch_info->info_size;
+  if (header->general.op_len < info_size) {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to read with %u\n", header->general.rank);
+    goto err;
+  }
+  memcpy (exch_info->remote_info, header->header_data, info_size);
+
+  eret = pgaspi_connect_endpoint_to (peer_rank, sn_config_timeout);
+  if (eret != GASPI_SUCCESS) {
+    /* We set io_err, connection is closed and remote peer reads EOF */
+    /* TODO: ????? */
+    GASPI_DEBUG_PRINT_ERROR("Failed to connect endpoint with %u\n", peer_rank);
+    goto err;
+  }
+
+  if (!exch_info->local_info) {
+    GASPI_DEBUG_PRINT_ERROR(
+      "Unexpected error: no exch information to %u\n", peer_rank
+    );
+    goto err;
+  }
+
+  ucx_device_sn_send_cmd_response (
+    udsn, recv_param, exch_info->local_info, exch_info->info_size
+  );
+
+err:
+  ;
+}
+
+
+/* ************************************************************************************
+ * GRP_CONNECT
+ * ************************************************************************************
+ */
 
 struct gaspiu_cd_header_group_connect {
   struct gaspi_cd_header_base general;
@@ -200,7 +276,8 @@ gaspiu_sn_send_recv_group_connect (
 
   gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   if (ucx_device_sn_send_recv_cmd (
-    &ucx_ctx->sn_device, target_rank, &cdh, total_header_size, recv_buf, max_recv_size
+    &ucx_ctx->sn_device, target_rank, &cdh, total_header_size,
+    recv_buf, max_recv_size
   ) != UCX_DEVICE_SN_OK) {
     fprintf (stderr, "Error send/recv group connect\n");
     goto err_send_recv;
@@ -289,7 +366,6 @@ gaspiu_sn_handle_group_connect (
   struct gaspiu_cd_header_group_connect * header
 )
 {
-
   const gaspi_group_ctx_t *grp_to_connect = &(gctx->groups[header->group]);
 
   //TODO: to remove?
@@ -307,6 +383,57 @@ gaspiu_sn_handle_group_connect (
   free (p.info);
 }
 
+/* ************************************************************************************
+ * QUEUE_CREATE
+ * ************************************************************************************
+ */
+
+static
+gaspi_return_t
+gaspiu_sn_send_recv_queue_create (
+  gaspi_rank_t target_rank, gaspi_dev_exch_info_t * dev_info
+)
+{
+  fprintf (stderr, "gaspiu_sn_send_recv_queue_create called\n");
+
+  size_t rc_size = dev_info->info_size;
+  if (rc_size > 0) {
+    return gaspiu_sn_send_recv_cmd (
+      target_rank, GASPI_SN_QUEUE_CREATE, dev_info->local_info, rc_size,
+      & (int) {0}, sizeof (int)
+    );    
+  }
+
+  return GASPI_SUCCESS;
+}
+
+static
+void
+gaspiu_sn_handle_queue_create (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspi_cd_header_connect * header
+)
+{
+  gaspi_dev_exch_info_t * exch_info = &(gctx->ep_conn[header->general.rank].exch_info);
+  if (!exch_info->remote_info) {
+    GASPI_DEBUG_PRINT_ERROR("Unexpected error: no connection to %u\n", header->general.rank);
+    goto err;
+  }
+
+  /* read remote info */
+  size_t info_size = exch_info->info_size;
+  if (header->general.op_len < info_size) {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to read with %u\n", header->general.rank);
+    goto err;
+  }
+  memcpy (exch_info->remote_info, header->header_data, info_size);
+
+  ucx_device_sn_send_cmd_response (udsn, recv_param, & (int) {0}, sizeof (int));
+
+err:
+  ;
+}
+
 void
 gaspiu_sn_handle_cmd (
   void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header
@@ -315,10 +442,22 @@ gaspiu_sn_handle_cmd (
   struct gaspi_cd_header_base * general = (struct gaspi_cd_header_base *) header;
   fprintf (stderr, "Handle called with op %d\n", general->op);
   switch (general->op) {
+  case GASPI_SN_CONNECT:
+    gaspiu_sn_handle_connect (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspi_cd_header_connect *) header
+    );
+    break;
   case GASPI_SN_GRP_CONNECT:
     gaspiu_sn_handle_group_connect (
       (gaspi_context_t *) gctx, udsn, recv_param,
       (struct gaspiu_cd_header_group_connect *) header
+    );
+    break;
+  case GASPI_SN_QUEUE_CREATE:
+    gaspiu_sn_handle_queue_create (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspi_cd_header_connect *) header
     );
     break;
   default:
@@ -341,19 +480,8 @@ gaspiu_sn_command (
 
   switch (op) {
   case GASPI_SN_CONNECT:
-    {
-      gaspi_dev_exch_info_t * dev_info = (gaspi_dev_exch_info_t *) arg;
-      size_t rc_size = dev_info->info_size;
-      if (rc_size == 0) { fprintf (stderr, "rc_size == 0\n"); break; }
-      eret = gaspiu_sn_send_recv_cmd (
-        rank, GASPI_SN_CONNECT,
-        dev_info->local_info, rc_size,
-        dev_info->remote_info, rc_size
-      );
-      if (eret != GASPI_SUCCESS) goto err_command;
-    }
-    eret = GASPI_ERROR; /* unhandled */
-    goto err_command;
+    eret = gaspiu_sn_send_recv_connect (rank, (gaspi_dev_exch_info_t *) arg);
+    if (eret != GASPI_SUCCESS) goto err_command;
     break;
   case GASPI_SN_GRP_CONNECT:
     {
@@ -362,6 +490,10 @@ gaspiu_sn_command (
       if (eret != GASPI_SUCCESS) goto err_command;
     
     }
+    break;
+  case GASPI_SN_QUEUE_CREATE:
+    eret = gaspiu_sn_send_recv_queue_create (rank, (gaspi_dev_exch_info_t *) arg);
+    if (eret != GASPI_SUCCESS) goto err_command;
     break;
   default:
     eret = GASPI_ERROR; /* unhandled */

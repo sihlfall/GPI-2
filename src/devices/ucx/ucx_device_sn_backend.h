@@ -48,8 +48,8 @@ enum ucx_device_sn_status ucx_device_sn_connect_to_rank (
 );
 enum ucx_device_sn_status ucx_device_sn_send_recv_cmd (
   struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
-  unsigned char * header, size_t header_size,
-  unsigned char * recv_buf, size_t recv_size
+  void * header, size_t header_size,
+  void * recv_buf, size_t recv_size
 );
 void ucx_device_sn_send_cmd_response (
   struct ucx_device_sn * udsn, void * recv_param,

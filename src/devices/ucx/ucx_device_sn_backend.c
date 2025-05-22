@@ -450,8 +450,8 @@ err:
 enum ucx_device_sn_status
 ucx_device_sn_send_recv_cmd (
   struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
-  unsigned char * header, size_t header_size,
-  unsigned char * recv_buf, size_t recv_size
+  void * header, size_t header_size,
+  void * recv_buf, size_t recv_size
 )
 {
   struct ucx_device_sn_ep_entry * ep_entry = &udsn->ep_entries [target_rank];
@@ -470,7 +470,7 @@ ucx_device_sn_send_recv_cmd (
   udsn->response_available = 0;
   udsn->recv_buf = recv_buf;
   udsn->max_recv_size = recv_size;
-  
+
   ucs_status_ptr_t request = ucp_am_send_nbx (
     ep_entry->ep, AM_CMD, header, header_size, NULL, 0,
     & (ucp_request_param_t) {
