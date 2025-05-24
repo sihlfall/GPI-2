@@ -1,6 +1,7 @@
 
 #include "GASPI.h"
 #include "GPI2_CommCtx.h"
+#include "GPI2_SEG.h"
 #include "GPI2_Types.h"
 #include "GPI2_SN.h"
 #include "devices/ucx/GPI2_UCX.h"
@@ -136,8 +137,7 @@ gaspiu_sn_send_recv_cmd (
 
   gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
   if (ucx_device_sn_send_recv_cmd (
-    &ucx_ctx->sn_device, target_rank, &cdh, total_header_size,
-    recv_buf, recv_size
+    &ucx_ctx->sn_device, target_rank, &cdh, total_header_size, recv_buf, recv_size
   ) != UCX_DEVICE_SN_OK) {
     fprintf (stderr, "Error send/recv\n");
     goto err_send_recv;
@@ -320,6 +320,108 @@ gaspiu_sn_handle_disconnect (
   }
 }
 
+
+/* ************************************************************************************
+ * GRP_CHECK
+ * ************************************************************************************
+ */
+
+struct gaspiu_cd_header_group_check {
+  struct gaspi_cd_header_base general;
+  int tnc;
+  int group;
+  int ret;
+};
+
+static
+gaspi_return_t
+gaspiu_sn_send_recv_group_check (
+  gaspi_rank_t target_rank, gaspi_timeout_t timeout_ms, gaspi_group_exch_info_t * gb
+)
+{
+  fprintf (stderr, "gaspiu_sn_send_recv_group_check called\n");
+
+  gaspi_context_t * gctx = &glb_gaspi_ctx;
+
+  /* TODO: Handle timeout. */
+  //struct timeb t0, t1;
+
+  //#pragma GCC diagnostic push
+  //#pragma GCC diagnostic ignored "-Wdeprecated-declarations"      
+  //ftime (&t0);
+  //#pragma GCC diagnostic pop
+
+  struct gaspiu_cd_header_group_check cdh = {
+    .general = {
+      .op_len = sizeof (*gb), /* TODO: ?????? */
+      .op = GASPI_SN_GRP_CHECK,
+      .rank = gctx->rank
+    },
+    .group = gb->group,
+    .tnc = gb->tnc,
+    .ret = gb->cs
+  };
+
+  while (1) {
+    gaspi_group_exch_info_t rem_gb = {0};
+    gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+    if (ucx_device_sn_send_recv_cmd (
+      &ucx_ctx->sn_device, target_rank, &cdh, sizeof (cdh), &rem_gb, sizeof (rem_gb)
+    ) != UCX_DEVICE_SN_OK) {
+      fprintf (stderr, "Error send/recv\n");
+      goto err_send_recv;
+    };
+  
+    if (rem_gb.ret >= 0 && gb->cs == rem_gb.cs) break;
+
+    /* TODO: Check for timeout! */
+    //#pragma GCC diagnostic push
+    //#pragma GCC diagnostic ignored "-Wdeprecated-declarations"    
+    //ftime (&t1);
+    //#pragma GCC diagnostic pop
+    //unsigned int delta_ms =
+    //  (t1.time - t0.time) * 1000 + (t1.millitm - t0.millitm);
+    //if (delta_ms > timeout_ms)
+    //{
+    //  return 1;
+    //}
+
+    if (gaspi_thread_sleep (250) < 0) {
+      gaspi_printf ("gaspi_thread_sleep error");
+    }
+
+    //check if groups match
+    /* if(gb.cs != rem_gb.cs) */
+    /* { */
+    /* GASPI_DEBUG_PRINT_ERROR("Mismatch with rank %d: ranks in group dont match\n", */
+    /* group_to_commit>rank_grp[i]); */
+    /* eret = GASPI_ERROR; */
+    /* goto errL; */
+    /* } */
+    //usleep(250000);
+    //GASPI_DELAY();
+  }
+
+  return GASPI_SUCCESS;
+
+err_send_recv:
+  return GASPI_ERROR;
+}
+
+static
+void
+gaspiu_sn_handle_group_check (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspiu_cd_header_group_check * header
+)
+{
+  gaspi_group_exch_info_t * gb = pgaspi_group_create_exch_info (
+    header->group, header->tnc
+  );
+  ucx_device_sn_send_cmd_response (udsn, recv_param, gb, sizeof (*gb));
+  free (gb);
+}
+
 /* ************************************************************************************
  * GRP_CONNECT
  * ************************************************************************************
@@ -482,6 +584,136 @@ gaspiu_sn_handle_group_connect (
 }
 
 /* ************************************************************************************
+ * SEG_REGISTER
+ * ************************************************************************************
+ */
+
+struct gaspi_segment_register_cd_header
+{
+  struct gaspi_cd_header_base general;
+  int seg_id;
+  unsigned long addr, size, notif_addr;
+  uint64_t data_rkey_buffer_size;
+  uint64_t notif_rkey_buffer_size;
+  unsigned char rkeys_buffer [];
+};
+
+struct gaspi_segment_register_cd_header_size_pair {
+  struct gaspi_segment_register_cd_header * h;
+  size_t size;
+};
+
+static
+struct gaspi_segment_register_cd_header_size_pair
+create_segment_register_cd_header (gaspi_rc_mseg_t * segment, int segment_id, int rank)
+{
+  size_t data_rkey_buffer_size = segment->mr[0].rkey_buffer_size;
+  size_t notif_rkey_buffer_size = segment->mr[1].rkey_buffer_size;
+  size_t struct_size = sizeof (struct gaspi_segment_register_cd_header) +
+    data_rkey_buffer_size + notif_rkey_buffer_size;
+  struct gaspi_segment_register_cd_header * h = calloc (1, struct_size);
+  *h = (struct gaspi_segment_register_cd_header) {
+    .general = {
+      .op_len = 0,
+      .op = GASPI_SN_SEG_REGISTER,
+      .rank = rank
+    },
+    .seg_id = segment_id,
+    .addr = segment->data.addr,
+    .notif_addr = segment->notif_spc.addr,
+    .size = segment->size,
+    .data_rkey_buffer_size = data_rkey_buffer_size,
+    .notif_rkey_buffer_size = notif_rkey_buffer_size  
+  };
+  fprintf (stderr,
+    "Creating seg reg cd header with rkey_buffer %p\n", segment->mr[0].rkey_buffer
+  );
+  memcpy (&h->rkeys_buffer[0], segment->mr[0].rkey_buffer, data_rkey_buffer_size);
+  memcpy (&h->rkeys_buffer[data_rkey_buffer_size],
+    segment->mr[1].rkey_buffer, notif_rkey_buffer_size
+  );
+  return (struct gaspi_segment_register_cd_header_size_pair) {
+    .h = h, .size = struct_size
+  };
+}
+
+static
+gaspi_return_t
+gaspiu_sn_send_recv_segment_register (
+  gaspi_rank_t target_rank, gaspi_segment_id_t segment_id
+)
+{
+  fprintf (stderr, "gaspiu_sn_send_recv_seg_register called\n");
+
+  gaspi_context_t * gctx = &glb_gaspi_ctx;
+
+  gaspi_rc_mseg_t * segment = &gctx->rrmd[segment_id][gctx->rank];
+  struct gaspi_segment_register_cd_header_size_pair p =
+    create_segment_register_cd_header (segment, segment_id, gctx->rank);
+  struct gaspi_segment_register_cd_header * h = p.h;
+  uint64_t hsz = p.size;
+
+  int result = 1;
+
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  if (ucx_device_sn_send_recv_cmd (
+    &ucx_ctx->sn_device, target_rank, &h, hsz,
+    &result, sizeof(result)
+  ) != UCX_DEVICE_SN_OK) {
+    fprintf (stderr, "Error send/recv segment header to rank %u\n", target_rank);
+    goto err_send_recv;
+  };
+ 
+  /* Registration failed on the remote side */
+  if (result) goto err_registration;
+ 
+  return GASPI_SUCCESS;
+
+err_registration:
+err_send_recv:
+   free (h);
+   return GASPI_ERROR;
+}
+
+static
+void
+gaspiu_sn_handle_segment_register (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspi_segment_register_cd_header * header
+)
+{
+  size_t data_rkey_buffer_size = header->data_rkey_buffer_size;
+  size_t notif_rkey_buffer_size = header->notif_rkey_buffer_size;
+  size_t total_size = data_rkey_buffer_size + notif_rkey_buffer_size;
+  unsigned char * data_rkey_buffer = NULL, * notif_rkey_buffer = NULL;
+  if (data_rkey_buffer_size) {
+    data_rkey_buffer = malloc (data_rkey_buffer_size);
+    fprintf (stderr, "Allocated data_rkey_buffer: %p\n", data_rkey_buffer);
+    memcpy (data_rkey_buffer, &header->rkeys_buffer[0], data_rkey_buffer_size);
+  }
+  if (notif_rkey_buffer_size) {
+    notif_rkey_buffer = malloc (notif_rkey_buffer_size);
+    fprintf (stderr, "Allocated notif_rkey_buffer: %p\n", notif_rkey_buffer);
+    memcpy (
+      notif_rkey_buffer, &header->rkeys_buffer[data_rkey_buffer_size],
+      notif_rkey_buffer_size
+    );
+  }
+
+  int ack = gaspi_segment_set ((gaspi_segment_descriptor_t) {
+    .rank = header->general.rank,
+    .seg_id = header->seg_id,
+    .addr = header->addr,
+    .size = header->size,
+    .notif_addr = header ->notif_addr,
+    .data_rkey_buffer = data_rkey_buffer,
+    .notif_rkey_buffer = notif_rkey_buffer
+  });
+
+  ucx_device_sn_send_cmd_response (udsn, recv_param, &ack, sizeof (ack));
+}
+
+/* ************************************************************************************
  * QUEUE_CREATE
  * ************************************************************************************
  */
@@ -532,6 +764,34 @@ err:
   ;
 }
 
+/* ************************************************************************************
+ * PROC_PING
+ * ************************************************************************************
+ */
+
+static
+gaspi_return_t
+gaspiu_sn_send_recv_proc_ping (gaspi_rank_t target_rank)
+{
+  fprintf (stderr, "gaspiu_sn_send_proc_ping called\n");
+
+  gaspi_context_t * gctx = &glb_gaspi_ctx;
+
+  return gaspiu_sn_send_recv_cmd (
+    target_rank, GASPI_SN_PROC_PING, & (int) {0}, 0, & (int) {0}, 0
+  );
+}
+
+static
+void
+gaspiu_sn_handle_proc_ping (
+  gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
+  struct gaspi_cd_header_connect * header
+)
+{
+  ucx_device_sn_send_cmd_response (udsn, recv_param, & (int) {0}, sizeof (int));
+}
+
 void
 gaspiu_sn_handle_cmd (
   void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header
@@ -558,14 +818,32 @@ gaspiu_sn_handle_cmd (
       (struct gaspi_cd_header_connect *) header
     );
     break;
+  case GASPI_SN_GRP_CHECK:
+    gaspiu_sn_handle_group_check (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspiu_cd_header_group_check *) header
+    );
+    break;
   case GASPI_SN_GRP_CONNECT:
     gaspiu_sn_handle_group_connect (
       (gaspi_context_t *) gctx, udsn, recv_param,
       (struct gaspiu_cd_header_group_connect *) header
     );
     break;
+  case GASPI_SN_SEG_REGISTER:
+    gaspiu_sn_handle_segment_register (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspiu_segment_regester_cd_header *) header
+    );
+    break;
   case GASPI_SN_QUEUE_CREATE:
     gaspiu_sn_handle_queue_create (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspi_cd_header_connect *) header
+    );
+    break;
+  case GASPI_SN_PROC_PING:
+    gaspiu_sn_handle_proc_ping (
       (gaspi_context_t *) gctx, udsn, recv_param,
       (struct gaspi_cd_header_connect *) header
     );
@@ -601,12 +879,15 @@ gaspiu_sn_command (
     eret = gaspiu_sn_send_disconnect (rank);
     if (eret != GASPI_SUCCESS) goto err_command;
     break;
+  case GASPI_SN_GRP_CHECK:
+    eret = gaspiu_sn_send_recv_group_check (
+      rank, timeout_ms, (gaspi_group_exch_info_t *) arg
+    );
+    if (eret != GASPI_SUCCESS) goto err_command;
+    break;
   case GASPI_SN_GRP_CONNECT:
-    {
-      gaspi_group_t group = *(gaspi_group_t *) arg;
-      eret = gaspiu_sn_send_recv_group_connect (rank, group);
-      if (eret != GASPI_SUCCESS) goto err_command;
-    }
+    eret = gaspiu_sn_send_recv_group_connect (rank, (gaspi_group_t *) arg);
+    if (eret != GASPI_SUCCESS) goto err_command;
     break;
   case GASPI_SN_QUEUE_CREATE:
     eret = gaspiu_sn_send_recv_queue_create (rank, (gaspi_dev_exch_info_t *) arg);
