@@ -17,6 +17,13 @@
 
 #define TEMP_PORT_OFFSET (30)
 
+
+enum {
+  GPI2_SN_TIMEOUT = -3,
+  GPI2_SN_EMFILE = -2,
+  GPI2_SN_ERROR = -1
+};
+
 struct gaspi_cd_header_base {
   size_t op_len;
   enum gaspi_sn_ops op;
@@ -150,6 +157,218 @@ gaspiu_sn_send_recv_cmd (
 err_send_recv:
 err_size_too_large:
   return GASPI_ERROR;
+}
+
+/* ************************************************************************************
+ * TOPOLOGY
+ * ************************************************************************************
+ */
+
+struct gaspi_cd_header_topology {
+  struct gaspi_cd_header_base general;
+  int tnc;
+  unsigned char header_data [];
+};
+
+static
+int
+gaspi_sn_recv_topology (gaspi_context_t * gctx, gaspi_timeout_t timeout_ms)
+{
+  const int port_to_wait =
+    gctx->config->sn_port + GASPI_MAX_PPN + gctx->local_rank;
+  int nsock = _gaspi_sn_wait_connection (port_to_wait, timeout_ms);
+
+  if (nsock < 0)
+  {
+    return nsock;
+  }
+
+  struct gaspi_cd_header cdh;
+
+  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
+
+  /* Read the header */
+  if (gaspi_sn_readn (nsock, &cdh, sizeof (cdh)) != sizeof (cdh))
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to read topology header.");
+    close (nsock);
+    return GPI2_SN_ERROR;
+  }
+
+  gctx->rank = cdh.rank;
+  gctx->tnc = cdh.tnc;
+  if (cdh.op != GASPI_SN_TOPOLOGY)
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Received unexpected topology data.");
+  }
+
+  gctx->hn_poff = (char *) calloc (gctx->tnc, 65);
+  if (gctx->hn_poff == NULL)
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to allocate memory.");
+    close (nsock);
+    return GPI2_SN_ERROR;
+  }
+
+  gctx->poff = gctx->hn_poff + gctx->tnc * 64;
+
+  /* Read the topology */
+  if (gaspi_sn_readn (nsock, gctx->hn_poff, gctx->tnc * 65) != gctx->tnc * 65)
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to read topology data.");
+    close (nsock);
+    return GPI2_SN_ERROR;
+  }
+
+  if (gaspi_sn_close (nsock) != 0)
+  {
+    GASPI_DEBUG_PRINT_ERROR ("Failed to close connection.");
+    return GPI2_SN_ERROR;
+  }
+
+  return 0;
+}
+
+#define container_of(ptr, type, member) \
+  ((type *)((unsigned char *)(ptr) - offsetof(type, member)))
+
+struct send_topologies_tracker {
+  unsigned char indices[8 * sizeof (unsigned int)];
+  unsigned int completed_mask;
+  unsigned int error_mask;
+};
+
+static
+struct send_topologies_tracker
+make_send_topologies_tracker (void)
+{
+  struct send_topologies_tracker tracker = {0};
+  for (int i = 0; i < 8 * sizeof (unsigned int); ++i) tracker.indices [i] = i;
+  return tracker;
+};
+
+static
+void
+cb_mark_send (void * user_data, _Bool was_error)
+{
+  unsigned char * p = (unsigned char *) user_data;
+  int idx = *p;
+  struct send_topologies_tracker * tracker = 
+    container_of(p - idx, struct send_topologies_tracker, indices[0]);
+  tracker->completed_mask |= 1u << idx;
+  if (was_error) tracker->error_mask |= 1u << idx;
+}
+
+static
+void
+cpu_pause (int * pausecnt, int maxpause)
+{
+  int cnt = *pausecnt;
+  for (int i = 0; i <= cnt; ++i) _mm_pause ();
+  if (cnt < maxpause) *pausecnt = cnt * 2;
+}
+
+static
+gaspi_return_t
+gaspi_sn_send_topologies (
+  gaspi_context_t * gctx, unsigned int our_rank, unsigned int start_mask,
+  gaspi_timeout_t timeout_ms
+)
+{
+  if (!start_mask) return GASPI_SUCCESS;
+
+  fprintf (stderr, "gaspiu_sn_send_topology called\n");
+
+  alignas (struct gaspi_cd_header_topology)
+    unsigned char header_buf [UCX_DEVICE_SN_MAX_HEADER_LENGTH];
+  size_t max_header_data_length =
+    UCX_DEVICE_SN_MAX_HEADER_LENGTH - sizeof (struct gaspi_cd_header_topology);
+  struct gaspi_cd_header_topology * cdh = (struct gaspi_cd_header_topology *) &header_buf[0];
+
+  gaspi_context_t * gctx = &glb_gaspi_ctx;
+
+  size_t send_size = gctx->tnc * 65;
+
+  size_t total_header_size;
+  *cdh = (struct gaspi_cd_header_topology) {
+    .general = {
+      .op_len = send_size,
+      .op = GASPI_SN_TOPOLOGY,
+      .rank = our_rank
+    }
+  };
+  if (send_size <= max_header_data_length) {
+    memcpy (cdh->header_data, gctx->hn_poff, send_size);
+    total_header_size = sizeof (struct gaspi_cd_header_topology) + send_size;
+  } else {
+    fprintf (stderr, "Too much data to send\n");
+    goto err_size_too_large;
+  }  
+
+  struct send_topologies_tracker tracker = make_send_topologies_tracker ();
+  unsigned int full_mask = start_mask * 2u - 1u;
+
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+
+  for (
+    unsigned int mask = start_mask, tracker_index = 0;
+    mask;
+    mask >>= 1, ++tracker_index
+  ) {
+    ucx_device_sn_send_nb (
+      &ucx_ctx->sn_device, our_rank | mask,
+      &cdh, total_header_size,
+      cb_mark_send, &tracker.indices[tracker_index]
+    );
+  }
+
+  {
+    int pausecnt = 1, maxpause = 512;
+    while (tracker.completed_mask != full_mask) cpu_pause (&pausecnt, maxpause);
+  }
+
+  if (tracker.error_mask) {
+    fprintf (stderr, "Error broadcasting topology\n");
+    goto err_send;
+  }
+
+  /* TODO: Timeout! */
+  fprintf (stderr, "SN: Successfully broadcast topology\n");
+
+  return GASPI_SUCCESS;
+
+err_size_too_large:
+err_send:
+  return GASPI_ERROR;
+}
+
+static
+unsigned int
+blsmsk (unsigned int x) {
+  /* compiler recognizes this pattern as blsmsk */
+  return x ^ (x - 1u);
+}
+
+gaspi_return_t
+gaspiu_sn_broadcast_topology (gaspi_context_t * gctx, gaspi_timeout_t timeout_ms)
+{
+  _Static_assert (sizeof (gctx->tnc) <= sizeof (unsigned int));
+  _Static_assert (sizeof (gctx->rank) <= sizeof (unsigned int));
+  unsigned int tnc = gctx->tnc;
+  unsigned int rank = gctx->rank;
+
+  if (rank) {
+    int rres = gaspi_sn_recv_topology (gctx, timeout_ms);
+    if (rres) return rres == GPI2_SN_TIMEOUT ? GASPI_TIMEOUT : GASPI_ERROR;
+  }
+
+  unsigned int delta = tnc - 1u - rank;
+  if (!delta || rank & 1u) return GASPI_SUCCESS;
+
+  unsigned int uint_most_significant = 1u << (8 * sizeof (unsigned int) - 1);
+  unsigned int delta_most_significant = uint_most_significant >> __builtin_clz (delta);
+  unsigned int start_mask = blsmsk (rank / 2u | delta_most_significant) / 2u + 1u;
+  return gaspi_sn_send_topologies (gctx, rank, start_mask, timeout_ms);
 }
 
 /* ************************************************************************************
