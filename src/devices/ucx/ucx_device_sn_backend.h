@@ -35,6 +35,11 @@ struct ucx_device_sn {
   ucp_listener_h sn_listener;
   uint16_t host_port;
   struct ucx_device_sn_ep_entry * ep_entries;
+  struct {
+    gaspi_rank_t rank;
+    gaspi_rank_t tnc;
+    void * _Atomic hn_poff;
+  } received_topology; /* TODO: put somewhere else? */
   /* _Alignas(max_align_t) unsigned char response_header [UCX_DEVICE_SN_MAX_HEADER_LENGTH]; */
 };
 
