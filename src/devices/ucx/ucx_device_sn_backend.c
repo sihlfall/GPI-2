@@ -6,6 +6,7 @@
 #include "ucp/api/ucp.h"
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <stdalign.h>
 #include <stdatomic.h>
 
 #define AM_CMD (999)
@@ -125,7 +126,7 @@ on_am_cmd (
 
   fprintf (stderr, "SN: AM recv handler called with op %d\n", ((struct gaspi_cd_header_base *)header)->op);
 
-  gaspiu_sn_handle_cmd (udsn->gctx, udsn, param, header);
+  gaspiu_sn_handle_cmd (udsn->gctx, udsn, param, header, data, length);
 
 err:
   return UCS_OK;
@@ -420,8 +421,9 @@ request_wait_and_finalize (
   ucp_worker_h ucp_worker, ucs_status_ptr_t request, _Bool * complete
 )
 {
-  if (!request) {
+  if (request == UCS_OK) {
     /* operation was completed immediately */
+    *complete = 1;
     return UCS_OK;
   } else if (UCS_PTR_IS_ERR(request)) {
     return UCS_PTR_STATUS(request);
@@ -542,3 +544,120 @@ err_am_send:
 err_not_connected:
   return UCX_DEVICE_SN_ERR_UNSPECIFIED;
 }
+
+
+
+
+struct send_tracker {
+  unsigned int completed_mask;
+  unsigned int error_mask;
+};
+
+static
+void
+mark_sent (void * user_data, _Bool was_error)
+{
+  uintptr_t idxmask = 8 * sizeof (unsigned int) - 1;
+  struct send_tracker * tracker =
+    (struct send_tracker *) ((uintptr_t) user_data & ~idxmask);
+  int idx = (uintptr_t) user_data & idxmask;
+  tracker->completed_mask |= 1u << idx;
+  if (was_error) tracker->error_mask |= 1u << idx;
+}
+
+static
+void
+cb_mark_sent (void * request, ucs_status_t status, void * user_data)
+{
+  mark_sent (user_data, 0);
+}
+
+static
+void
+cpu_pause (int * pausecnt, int maxpause)
+{
+  int cnt = *pausecnt;
+  for (int i = 0; i <= cnt; ++i) _mm_pause ();
+  if (cnt < maxpause) *pausecnt = cnt * 2;
+}
+
+static
+enum ucx_device_sn_status
+ucx_device_sn_send_and_wait_single (
+  struct ucx_device_sn * udsn, gaspi_rank_t target_rank,
+  void * header, size_t header_size, void * data, size_t length,
+  uintptr_t user_data
+)
+{
+  struct ucx_device_sn_ep_entry * ep_entry = &udsn->ep_entries [target_rank];
+  if (!ep_entry->is_connected) {
+    fprintf (stderr, "Target rank not connected\n");
+    goto err_not_connected;
+  }
+
+  fprintf (stderr, "Sending ...\n");
+
+  /* TODO: Error handler! */
+  ucs_status_ptr_t request = ucp_am_send_nbx (
+    ep_entry->ep, AM_CMD, header, header_size, data, length,
+    & (ucp_request_param_t) {
+      .op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK | UCP_OP_ATTR_FIELD_FLAGS |
+        UCP_OP_ATTR_FIELD_USER_DATA,
+      .cb = { .send = cb_mark_sent },
+      .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+      .user_data = (void *) user_data
+    }
+  );
+  if (request == UCS_OK) {
+    mark_sent (user_data, 0);
+  } else if (UCS_PTR_IS_ERR (request)) {
+    mark_sent (user_data, 1);
+    goto err_am_send;
+  }
+
+  return UCX_DEVICE_SN_OK;
+
+err_am_send:
+err_not_connected:
+  return UCX_DEVICE_SN_ERR_UNSPECIFIED;
+}
+
+enum ucx_device_sn_status
+ucx_device_sn_send_and_wait (
+  struct ucx_device_sn * udsn, int n_targets,
+  gaspi_rank_t target_ranks [static n_targets],
+  void * headers, size_t header_size,
+  void * data, size_t length
+)
+{
+  /* Max. value for n_targets is 32! */
+
+  /* We *must* align the tracker to 32 bytes, since the least 5 bits of its address 
+   * will be used for storing the index. */
+  alignas(8 * sizeof (unsigned int)) struct send_tracker tracker = {0};
+
+  unsigned char * cur_header_ptr = (unsigned char *) headers;
+  for (
+    int i = 0; i < n_targets; ++i, cur_header_ptr += header_size
+  ) {
+    ucx_device_sn_send_and_wait_single (
+      udsn, target_ranks[i], cur_header_ptr, header_size, data, length,
+      (uintptr_t) &tracker | (uintptr_t) i
+    );
+  }
+
+  unsigned int full_mask = (2u << (n_targets - 1u)) - 1u;
+
+  {
+    int pausecnt = 1, maxpause = 512;
+    while (tracker.completed_mask != full_mask) cpu_pause (&pausecnt, maxpause);
+  }
+
+  if (tracker.error_mask) {
+    fprintf (stderr, "Error broadcasting topology\n");
+    goto err_send;
+  }
+
+err_send:
+  return UCX_DEVICE_SN_ERR_UNSPECIFIED;
+};

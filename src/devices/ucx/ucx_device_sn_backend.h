@@ -38,6 +38,7 @@ struct ucx_device_sn {
   struct {
     gaspi_rank_t rank;
     gaspi_rank_t tnc;
+    size_t length;
     void * _Atomic hn_poff;
   } received_topology; /* TODO: put somewhere else? */
   /* _Alignas(max_align_t) unsigned char response_header [UCX_DEVICE_SN_MAX_HEADER_LENGTH]; */
@@ -69,12 +70,19 @@ void ucx_device_sn_send_cmd_response (
   struct ucx_device_sn * udsn, void * recv_param,
   void * header, size_t header_size
 );
-
+enum ucx_device_sn_status
+ucx_device_sn_send_and_wait (
+  struct ucx_device_sn * udsn, int n_targets,
+  gaspi_rank_t target_ranks [static n_targets],
+  void * headers, size_t header_size,
+  void * data, size_t length
+);
 
 
 /* "Static" callback, to be implemented in GPI2_SN_ucx.c */
 void gaspiu_sn_handle_cmd (
-  void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header
+  void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header,
+  void * data, size_t length
 );
 
 #endif

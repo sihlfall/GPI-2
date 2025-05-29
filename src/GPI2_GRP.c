@@ -143,6 +143,7 @@ pgaspi_alloc_group_comm_mem (gaspi_context_t * const gctx,
 gaspi_return_t
 pgaspi_group_create (gaspi_group_t * const group)
 {
+  fprintf (stderr, "Group create called\n");
   gaspi_return_t eret = GASPI_ERROR;
   gaspi_context_t *const gctx = &glb_gaspi_ctx;
 

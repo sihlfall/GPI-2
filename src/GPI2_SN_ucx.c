@@ -171,23 +171,6 @@ struct gaspi_cd_header_topology {
   size_t data_size;
 };
 
-struct send_topologies_tracker {
-  unsigned int completed_mask;
-  unsigned int error_mask;
-};
-
-static
-void
-cb_mark_send (void * user_data, _Bool was_error)
-{
-  uintptr_t idxmask = 8 * sizeof (unsigned int) - 1;
-  struct send_topologies_tracker * tracker =
-    (struct send_topologies_tracker *) ((uintptr_t) user_data & ~idxmask);
-  int idx = (uintptr_t) user_data & idxmask;
-  tracker->completed_mask |= 1u << idx;
-  if (was_error) tracker->error_mask |= 1u << idx;
-}
-
 static
 void
 cpu_pause (int * pausecnt, int maxpause)
@@ -195,6 +178,33 @@ cpu_pause (int * pausecnt, int maxpause)
   int cnt = *pausecnt;
   for (int i = 0; i <= cnt; ++i) _mm_pause ();
   if (cnt < maxpause) *pausecnt = cnt * 2;
+}
+
+static
+gaspi_return_t
+gaspi_sn_recv_topology (
+  gaspi_context_t * gctx, gaspi_timeout_t timeout_ms
+)
+{
+  gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
+  struct ucx_device_sn * udsn = &ucx_ctx->sn_device;
+
+  int pausecnt = 1, maxpause = 512;
+  void * hn_poff;
+  while (1) {
+    hn_poff = atomic_load_explicit(&udsn->received_topology.hn_poff, memory_order_acquire);
+    if (hn_poff) break;
+    cpu_pause (&pausecnt, maxpause);
+  }
+
+  gctx->rank = udsn->received_topology.rank;
+  gctx->tnc = udsn->received_topology.tnc;
+  gctx->hn_poff = udsn->received_topology.hn_poff;
+  gctx->poff = gctx->hn_poff + gctx->tnc * 64;
+  
+  atomic_store_explicit(&udsn->received_topology.hn_poff, NULL, memory_order_release);
+
+  return GASPI_SUCCESS;
 }
 
 static
@@ -208,25 +218,21 @@ gaspi_sn_send_topologies (
 
   fprintf (stderr, "gaspiu_sn_send_topology called\n");
 
-  gaspi_context_t * gctx = &glb_gaspi_ctx;
-  
-  /* We *must* align the tracker to 32 bytes, since the least 5 bits of its address 
-   * will be used for storing the index. */
-  alignas(8 * sizeof (unsigned int)) struct send_topologies_tracker tracker = {0};
-  unsigned int full_mask = start_mask * 2u - 1u;
-
   gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
   /* !! This must live until send is complete !! */
   struct gaspi_cd_header_topology cdhs [8 * sizeof (unsigned int)];
+  gaspi_rank_t target_ranks [8 * sizeof (unsigned int)];
 
   size_t data_size = gctx->tnc * 65;
   char * hn_poff = gctx->hn_poff;
+  unsigned int tracker_index = 0;
   for (
-    unsigned int mask = start_mask, tracker_index = 0;
+    unsigned int mask = start_mask;
     mask;
     mask >>= 1, ++tracker_index
   ) {
+    target_ranks[tracker_index] = our_rank | mask;
     cdhs[tracker_index] = (struct gaspi_cd_header_topology) {
       .general = {
         .op_len = data_size,
@@ -237,23 +243,15 @@ gaspi_sn_send_topologies (
       .your_rank = our_rank | mask,
       .data_size = data_size
     };
-    ucx_device_sn_send_nb (
-      &ucx_ctx->sn_device, our_rank | mask,
-      &cdhs[tracker_index], sizeof (cdhs[0]),
-      hn_poff, data_size,
-      cb_mark_send, (uintptr_t) (&tracker) + tracker_index
-    );
   }
 
-  {
-    int pausecnt = 1, maxpause = 512;
-    while (tracker.completed_mask != full_mask) cpu_pause (&pausecnt, maxpause);
-  }
-
-  if (tracker.error_mask) {
-    fprintf (stderr, "Error broadcasting topology\n");
+  if (ucx_device_sn_send_and_wait (
+    &ucx_ctx->sn_device, tracker_index, target_ranks,
+    cdhs, sizeof (cdhs[0]), hn_poff, data_size
+  ) != UCX_DEVICE_SN_OK) {
+    fprintf (stderr, "SN: Error broadcasting topology\n");
     goto err_send;
-  }
+  };
 
   /* TODO: Timeout! */
   fprintf (stderr, "SN: Successfully broadcast topology\n");
@@ -299,78 +297,21 @@ static
 void
 gaspiu_sn_handle_topology (
   gaspi_context_t * gctx, struct ucx_device_sn * udsn, void * recv_param,
-  struct gaspi_cd_header_topology * header
+  struct gaspi_cd_header_topology * header, void * data, size_t length
 )
 {
   if (atomic_load_explicit(&udsn->received_topology.hn_poff, memory_order_acquire)) {
     GASPI_DEBUG_PRINT_ERROR ("Received unexpected topology data.");
     return;
   }
-  size_t sz = gctx->tnc * 65;
-  /* To do: Read data! */
-  unsigned char * topo = (unsigned char *) calloc (sz, 1);
-  memcpy (topo, header->header_data, sz);
+  unsigned char * topo = (unsigned char *) calloc (length, 1);
+  memcpy (topo, data, length);
   udsn->received_topology.rank = header->your_rank;
   udsn->received_topology.tnc = header->tnc;
+  udsn->received_topology.length = length;
   atomic_store_explicit(&udsn->received_topology.hn_poff, topo, memory_order_release);
 }
 
-int tmp () {
-
-  const int port_to_wait =
-    gctx->config->sn_port + GASPI_MAX_PPN + gctx->local_rank;
-  int nsock = _gaspi_sn_wait_connection (port_to_wait, timeout_ms);
-
-  if (nsock < 0)
-  {
-    return nsock;
-  }
-
-  struct gaspi_cd_header cdh;
-
-  memset (&cdh, 0, sizeof (struct gaspi_cd_header));
-
-  /* Read the header */
-  if (gaspi_sn_readn (nsock, &cdh, sizeof (cdh)) != sizeof (cdh))
-  {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to read topology header.");
-    close (nsock);
-    return GPI2_SN_ERROR;
-  }
-
-  gctx->rank = cdh.rank;
-  gctx->tnc = cdh.tnc;
-  if (cdh.op != GASPI_SN_TOPOLOGY)
-  {
-    GASPI_DEBUG_PRINT_ERROR ("Received unexpected topology data.");
-  }
-
-  gctx->hn_poff = (char *) calloc (gctx->tnc, 65);
-  if (gctx->hn_poff == NULL)
-  {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to allocate memory.");
-    close (nsock);
-    return GPI2_SN_ERROR;
-  }
-
-  gctx->poff = gctx->hn_poff + gctx->tnc * 64;
-
-  /* Read the topology */
-  if (gaspi_sn_readn (nsock, gctx->hn_poff, gctx->tnc * 65) != gctx->tnc * 65)
-  {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to read topology data.");
-    close (nsock);
-    return GPI2_SN_ERROR;
-  }
-
-  if (gaspi_sn_close (nsock) != 0)
-  {
-    GASPI_DEBUG_PRINT_ERROR ("Failed to close connection.");
-    return GPI2_SN_ERROR;
-  }
-
-  return 0;
-}
 
 /* ************************************************************************************
  * CONNECT
@@ -676,13 +617,13 @@ gaspiu_sn_send_recv_group_connect (
   gaspi_rank_t target_rank, gaspi_group_t group
 )
 {
-  fprintf (stderr, "gaspiu_sn_send_recv_group_connect called\n");
+  fprintf (stderr, "gaspiu_sn_send_recv_group_connect called, target rank: %d, group: %d\n", (int) target_rank, (int) group);
 
   gaspi_context_t * gctx = &glb_gaspi_ctx;
 
   struct gaspiu_cd_header_group_connect cdh = {
     .general = {
-      .op_len = sizeof (gaspi_rc_mseg_t),
+      .op_len = 0,
       .op = GASPI_SN_GRP_CONNECT,
       .rank = gctx->rank
     },
@@ -759,6 +700,9 @@ _gaspi_create_mseg_exch_info (gaspi_rc_mseg_t * mseg)
   size_t sz = sizeof (struct gaspiu_mseg_exch_info)
     + data_rkey_buffer_size + notif_spc_rkey_buffer_size;
 
+  fprintf (stderr, "data_rkey_buffer_size: %lu\n", data_rkey_buffer_size);
+  fprintf (stderr, "data_rkey_buffer_size: %lu\n", notif_spc_rkey_buffer_size);
+
   struct gaspiu_mseg_exch_info * info = malloc (sz);
   /* TO DO: Check for NULL? */
   *info = (struct gaspiu_mseg_exch_info) {
@@ -786,7 +730,14 @@ gaspiu_sn_handle_group_connect (
   struct gaspiu_cd_header_group_connect * header
 )
 {
+
+  fprintf (stderr, "Gaspiu handle group connect called\n");
+  fprintf (stderr, "gctx: %p\n", gctx);
+  fprintf (stderr, "groups: %p\n", gctx->groups);
+  fprintf (stderr, "group: %d\n", header->group);
+
   const gaspi_group_ctx_t *grp_to_connect = &(gctx->groups[header->group]);
+  fprintf (stderr, "Test\n");
 
   //TODO: to remove?
   while ((grp_to_connect->id == -1))
@@ -794,13 +745,24 @@ gaspiu_sn_handle_group_connect (
     GASPI_DELAY();
   }
 
+  fprintf (stderr, "Test2 \n");
+  fprintf (stderr, "ptr: %p\n", grp_to_connect);
+  fprintf (stderr, "ptr: %p\n", grp_to_connect->rrcd);
+  fprintf (stderr, "ptr: %p\n", grp_to_connect->rrcd[gctx->rank]);
+
   struct mseg_exch_info_size_pair p = _gaspi_create_mseg_exch_info (
     &grp_to_connect->rrcd[gctx->rank]
   );
 
+  fprintf (stderr, "Test3\n");
+
+  fprintf (stderr, "mseg exch info created %d\n", p.info != 0);
+
   ucx_device_sn_send_cmd_response (udsn, recv_param, p.info, p.size);
 
   free (p.info);
+
+  fprintf (stderr, "Finished handle group connect\n");
 }
 
 /* ************************************************************************************
@@ -1014,12 +976,20 @@ gaspiu_sn_handle_proc_ping (
 
 void
 gaspiu_sn_handle_cmd (
-  void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header
+  void * gctx, struct ucx_device_sn * udsn, void * recv_param, void * header,
+  void * data, size_t length
 )
 {
   struct gaspi_cd_header_base * general = (struct gaspi_cd_header_base *) header;
   fprintf (stderr, "Handle called with op %d\n", general->op);
   switch (general->op) {
+  case GASPI_SN_TOPOLOGY:
+    gaspiu_sn_handle_topology (
+      (gaspi_context_t *) gctx, udsn, recv_param,
+      (struct gaspi_cd_header_connect *) header,
+      data, length
+    );
+    break;
   case GASPI_SN_CONNECT:
     gaspiu_sn_handle_connect (
       (gaspi_context_t *) gctx, udsn, recv_param,
@@ -1044,12 +1014,14 @@ gaspiu_sn_handle_cmd (
       (struct gaspiu_cd_header_group_check *) header
     );
     break;
+    /*
   case GASPI_SN_GRP_CONNECT:
     gaspiu_sn_handle_group_connect (
       (gaspi_context_t *) gctx, udsn, recv_param,
       (struct gaspiu_cd_header_group_connect *) header
     );
     break;
+    */
   case GASPI_SN_SEG_REGISTER:
     gaspiu_sn_handle_segment_register (
       (gaspi_context_t *) gctx, udsn, recv_param,
@@ -1105,10 +1077,12 @@ gaspiu_sn_command (
     );
     if (eret != GASPI_SUCCESS) goto err_command;
     break;
+    /*
   case GASPI_SN_GRP_CONNECT:
     eret = gaspiu_sn_send_recv_group_connect (rank, (gaspi_group_t *) arg);
     if (eret != GASPI_SUCCESS) goto err_command;
     break;
+    */
   case GASPI_SN_QUEUE_CREATE:
     eret = gaspiu_sn_send_recv_queue_create (rank, (gaspi_dev_exch_info_t *) arg);
     if (eret != GASPI_SUCCESS) goto err_command;
