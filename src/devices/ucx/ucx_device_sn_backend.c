@@ -625,6 +625,8 @@ err_not_connected:
 enum ucx_device_sn_status
 ucx_device_sn_send_and_wait (
   struct ucx_device_sn * udsn, int n_targets,
+  char const * hostip4 [static n_targets],
+  uint64_t port [static n_targets],
   gaspi_rank_t target_ranks [static n_targets],
   void * headers, size_t header_size,
   void * data, size_t length
@@ -640,7 +642,13 @@ ucx_device_sn_send_and_wait (
   for (
     int i = 0; i < n_targets; ++i, cur_header_ptr += header_size
   ) {
-    ucx_device_sn_send_and_wait_single (
+    if (ucx_device_sn_connect_to_rank (
+      udsn, hostip4[i], port[i], target_ranks[i], 0 /*timeout_ms*/
+    ) != UCX_DEVICE_SN_OK) {
+      fprintf(stderr, "Could not connect to rank %d\n", target_ranks[i]);
+      continue;
+    }
+    (void) ucx_device_sn_send_and_wait_single (
       udsn, target_ranks[i], cur_header_ptr, header_size, data, length,
       (uintptr_t) &tracker | (uintptr_t) i
     );
@@ -657,6 +665,8 @@ ucx_device_sn_send_and_wait (
     fprintf (stderr, "Error broadcasting topology\n");
     goto err_send;
   }
+
+  return UCX_DEVICE_SN_OK;
 
 err_send:
   return UCX_DEVICE_SN_ERR_UNSPECIFIED;

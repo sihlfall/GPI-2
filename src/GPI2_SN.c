@@ -590,6 +590,10 @@ gaspi_return_t
 gaspi_sn_broadcast_topology (gaspi_context_t * const gctx,
                              const gaspi_timeout_t timeout_ms)
 {
+  fprintf(stderr, "Broadcasting topology\n");
+  return gaspiu_sn_broadcast_topology(gctx, timeout_ms);
+
+
   int mask = 0x1;
   int dst, src;
 

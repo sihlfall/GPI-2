@@ -73,6 +73,8 @@ void ucx_device_sn_send_cmd_response (
 enum ucx_device_sn_status
 ucx_device_sn_send_and_wait (
   struct ucx_device_sn * udsn, int n_targets,
+  char const * hostip4 [static n_targets],
+  uint64_t port [static n_targets],
   gaspi_rank_t target_ranks [static n_targets],
   void * headers, size_t header_size,
   void * data, size_t length

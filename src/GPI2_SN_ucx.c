@@ -216,13 +216,15 @@ gaspi_sn_send_topologies (
 {
   if (!start_mask) return GASPI_SUCCESS;
 
-  fprintf (stderr, "gaspiu_sn_send_topology called\n");
+  fprintf (stderr, "gaspiu_sn_send_topologies called\n");
 
   gaspi_ucx_ctx * ucx_ctx = (gaspi_ucx_ctx *) gctx->device->ctx;
 
   /* !! This must live until send is complete !! */
   struct gaspi_cd_header_topology cdhs [8 * sizeof (unsigned int)];
   gaspi_rank_t target_ranks [8 * sizeof (unsigned int)];
+  char const * hostip4 [8 * sizeof (unsigned int)];
+  uint64_t port [8 * sizeof(unsigned int)];
 
   size_t data_size = gctx->tnc * 65;
   char * hn_poff = gctx->hn_poff;
@@ -232,7 +234,10 @@ gaspi_sn_send_topologies (
     mask;
     mask >>= 1, ++tracker_index
   ) {
-    target_ranks[tracker_index] = our_rank | mask;
+    unsigned int target_rank = our_rank | mask;
+    target_ranks[tracker_index] = target_rank;
+    hostip4[tracker_index] = pgaspi_gethostname (target_rank);
+    port[tracker_index] = gctx->config->sn_port + TEMP_PORT_OFFSET + gctx->poff[target_rank];
     cdhs[tracker_index] = (struct gaspi_cd_header_topology) {
       .general = {
         .op_len = data_size,
@@ -240,13 +245,14 @@ gaspi_sn_send_topologies (
         .rank = our_rank
       },
       .tnc = gctx->tnc,
-      .your_rank = our_rank | mask,
+      .your_rank = target_rank,
       .data_size = data_size
     };
   }
 
   if (ucx_device_sn_send_and_wait (
-    &ucx_ctx->sn_device, tracker_index, target_ranks,
+    &ucx_ctx->sn_device, tracker_index,
+    hostip4, port, target_ranks,
     cdhs, sizeof (cdhs[0]), hn_poff, data_size
   ) != UCX_DEVICE_SN_OK) {
     fprintf (stderr, "SN: Error broadcasting topology\n");
@@ -1014,14 +1020,12 @@ gaspiu_sn_handle_cmd (
       (struct gaspiu_cd_header_group_check *) header
     );
     break;
-    /*
   case GASPI_SN_GRP_CONNECT:
     gaspiu_sn_handle_group_connect (
       (gaspi_context_t *) gctx, udsn, recv_param,
       (struct gaspiu_cd_header_group_connect *) header
     );
     break;
-    */
   case GASPI_SN_SEG_REGISTER:
     gaspiu_sn_handle_segment_register (
       (gaspi_context_t *) gctx, udsn, recv_param,
